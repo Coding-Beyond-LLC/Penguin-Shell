@@ -7,7 +7,7 @@
 
 #include <stddef.h>
 #include <stdlib.h>
-#include "antarctic_env.h"
+#include "../antarctic/antarctic_env.h"
 
 typedef enum {
     VARIABLE_TOKEN,

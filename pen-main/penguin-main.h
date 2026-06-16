@@ -15,7 +15,7 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 #include "../antarctic/antarctic_env.h"
-#include "pen_lan.h"
+#include "../pen-lan/pen_lan.h"
 
 #define USAGE   \
     "The penguin shell (•ᴗ•)ゝ\n" \
@@ -30,8 +30,7 @@
     "  unalias [alias name]                  Deletes the specified alias.\n" \
     "  xpt [variable name]=[value]           Sets a new environment variable with the specificied value.\n" \
 
-#define BUILT_INS_HIGH 7
-#define BUILT_INS_LOW 0
+#define BUILT_INS_COUNT (sizeof(pen_builtins) / sizeof(pen_builtin))
 
 static struct option pen_options[] = {
     {"help", no_argument, NULL, 'h'}
@@ -40,6 +39,7 @@ static struct option pen_options[] = {
 typedef struct {
     char * command;
     void (*pen_func)(char ** args, history *, pen_alias_table *, size_t);
+    char * usage;
 } pen_builtin;
 
 typedef struct {
@@ -62,26 +62,16 @@ void free_tokens(char ** tokens, size_t arg_count);
 int run(int argc, char ** argv);
 
 static pen_builtin pen_builtins[] = {
-    {"alias", pen_export},
-    {"cd", pen_cd },
-    { "chirp", pen_chirp},
-    {"exit", pen_exit},
-    { "history", pen_print_history},
-    { "pwd", pen_pwd },
-    {"unalias", pen_unalias},
-    { "xpt", pen_export}
+    {"alias", pen_export, "alias [alias name]=[alias value], Creates an alias with the specified name.\n"},
+    {"cd", pen_cd, "cd [path], Change directory to path (use * for home directory).\n"},
+    { "chirp", pen_chirp, "chirp [environment variable], Outputs out the value of the specified environment variable.\n"},
+    {"exit", pen_exit, "exit, Closes the shell.\n"},
+    { "history", pen_print_history, "history, Outputs command history throughout the shell's runtime up to a max of 128 commands (latest commands).\n"},
+    { "pwd", pen_pwd, "pwd, Outputs the current working directory.\n"},
+    {"unalias", pen_unalias, "unalias [alias name], deletes the specified alias.\n"},
+    { "xpt", pen_export, "xpt [variable name]=[value], Sets a new environment variable with the specified value.\n"}
 };
 
-static pen_builtin_usage pen_builtin_usages[] = {
-    {"alias", "alias [alias name]=[alias value], Creates an alias with the specified name.\n"},
-    {"cd", "cd [path], Change directory to path (use * for home directory).\n"  },
-    { "chirp", "chirp [environment variable], Outputs out the value of the specified environment variable.\n"},
-    {"exit", "exit, Closes the shell.\n"},
-    { "history", "history, Outputs command history throughout the shell's runtime up to a max of 128 commands (latest commands).\n"},
-    { "pwd", "pwd, Outputs the current working directory.\n" },
-    {"unalias", "unalias [alias name], deletes the specified alias.\n"},
-    { "xpt", "xpt [variable name]=[value], Sets a new environment variable with the specified value.\n"}
-};
-
-void (*pen_lookup(char ** args))(char **, history *, pen_alias_table *, size_t);
+pen_builtin * pen_lookup(char ** args);
+void handle_help(pen_builtin * builtin);
 #endif //PENGUIN_PENGUIN_MAIN_H
