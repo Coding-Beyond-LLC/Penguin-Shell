@@ -42,13 +42,8 @@ typedef struct {
     char * usage;
 } pen_builtin;
 
-typedef struct {
-    char * command;
-    char * usage;
-} pen_builtin_usage;
-
 //method that handles execution of the commands
-int waddle(char * base_command, char ** args);
+void waddle(char * base_command, char ** args);
 
 //methods to handle build in shell commands
 void pen_exit(char ** args, history * hist, pen_alias_table * alias_table, size_t arg_count);

@@ -45,7 +45,7 @@ void handle_help(pen_builtin * builtin) {
 }
 
 //method that handles execution of the commands, if the command is not found then it will print an error message
-int waddle(char * base_command, char ** args) {
+void waddle(char * base_command, char ** args) {
 
     pid_t pid;
     int child_status;
@@ -61,7 +61,8 @@ int waddle(char * base_command, char ** args) {
     if (pid == 0) {
         //execvp call here
         execvp(base_command, args);
-        exit(0);
+        fprintf(stderr, "%s: %s\n", base_command, strerror(errno));
+        _exit(errno == ENOENT ? 127 : 126);
     }
 
     wait(&child_status);
@@ -145,19 +146,19 @@ static void record_history(history *hist, char *cmmd, char **tokens, size_t arg_
 
 static void dispatch_command(char ** tokens, history * hist, pen_alias_table * alias_table, size_t arg_count) {
 
-    pen_builtin * pen_builtin = pen_lookup(tokens);
+    pen_builtin * builtin = pen_lookup(tokens);
 
-    if(pen_builtin == NULL) {
+    if(builtin == NULL) {
         waddle(tokens[0], tokens);
         return;
     }
 
     if(is_help_flag(tokens[1])) {
-        handle_help(pen_builtin);
+        handle_help(builtin);
         return;
     }
 
-    pen_builtin->pen_func(tokens, hist, alias_table, arg_count);
+    builtin->pen_func(tokens, hist, alias_table, arg_count);
 }
 
 static void process_line(char * cmmd, history * hist, pen_alias_table * alias_table) {
@@ -175,10 +176,9 @@ static void process_line(char * cmmd, history * hist, pen_alias_table * alias_ta
     free_tokens(tokens, arg_count);
 }
 
-static char * build_prompt(char * prompt, size_t size) {
+static char * build_prompt(char * prompt) {
 
     char cwd[MAX_PATH_LEN] = {0};
-    char * cmmd;
 
     //get the current working directory
     getcwd(cwd, MAX_PATH_LEN);
@@ -229,7 +229,7 @@ int run(int argc, char ** argv) {
     char * cmmd;
     char prompt[MAX_PATH_LEN + 38];
 
-    while ((cmmd = readline(build_prompt(prompt, sizeof(prompt)))) != NULL) {
+    while ((cmmd = readline(build_prompt(prompt))) != NULL) {
         process_line(cmmd, hist, alias_table);
         free(cmmd);
     }
