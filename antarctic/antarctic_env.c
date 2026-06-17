@@ -86,7 +86,7 @@ void clear_alias_table(pen_alias_table * alias_table) {
     free(alias_table);
 }
 
-void pen_export(char ** args, history * hist, pen_alias_table * alias_table, size_t arg_count){
+void pen_export(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count){
 
     //the scheme will be something like VAR_NAME=String
     //so to verify that it's a valid variable entry we can just do a simple
@@ -98,7 +98,7 @@ void pen_export(char ** args, history * hist, pen_alias_table * alias_table, siz
         return;
     }
 
-    char * new_var = *(args + 1);
+    char * new_var = *(tok_list->args + 1);
 
     size_t length_to_parse = strlen(new_var);
 
@@ -136,15 +136,15 @@ void pen_export(char ** args, history * hist, pen_alias_table * alias_table, siz
     }
 
     //set the var value
-    if (strcmp(*args, "xpt") == 0) {
+    if (strcmp(*(tok_list->args), "xpt") == 0) {
         setenv(name, value, 1);
-    }else if (strcmp(*args, "alias") == 0) {
+    }else if (strcmp(*(tok_list->args), "alias") == 0) {
         add_alias(alias_table, name, value);
     }
 
 }
 
-void pen_chirp(char ** args, history * hist, pen_alias_table * alias_table, size_t arg_count) {
+void pen_chirp(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count) {
 
     (void)hist;
 
@@ -152,7 +152,7 @@ void pen_chirp(char ** args, history * hist, pen_alias_table * alias_table, size
         return;
     }
 
-    char * var = *(args + 1);
+    char * var = *(tok_list->args + 1);
     char * value = getenv(var);
     if (value != NULL) {
         printf("(•ᴗ•)ゝ->%s\n", value);
@@ -161,13 +161,13 @@ void pen_chirp(char ** args, history * hist, pen_alias_table * alias_table, size
     }
 }
 
-void pen_unalias(char ** args, history * hist, pen_alias_table * alias_table, size_t arg_count) {
+void pen_unalias(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count) {
     (void) hist;
     if (arg_count < 2) {
         return;
     }
 
-    char * alias = *(args + 1);
+    char * alias = *(tok_list->args + 1);
     clear_alias(alias_table, alias);
 }
 
@@ -260,8 +260,7 @@ int add_to_history(history * hist, char * full_cmmd, char * command, char ** arg
     return 0;
 }
 
-void pen_print_history(char ** args, history * hist, pen_alias_table * alias_table, size_t arg_count) {
-    (void)args;
+void pen_print_history(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count) {
     (void)arg_count;
     for (int i = 0; i < hist->cells_filled; i++) {
         printf("%s\n", (*(hist->entries + i))->full_cmmd);

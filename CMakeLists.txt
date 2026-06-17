@@ -8,8 +8,8 @@ add_executable(penguin main.c
         pen-main/penguin-main.c
         antarctic/antarctic_env.h
         antarctic/antarctic_env.c
-        pen-lan/pen_lan.h
-        pen-lan/pen_lan.c)
+        pen-lan/lex.h
+        pen-lan/lex.c)
 
 target_include_directories(penguin PRIVATE pen-main antarctic pen-lan)
 

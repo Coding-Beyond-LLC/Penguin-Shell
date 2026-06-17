@@ -15,7 +15,7 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 #include "../antarctic/antarctic_env.h"
-#include "../pen-lan/pen_lan.h"
+#include "../pen-lan/lex.h"
 
 #define USAGE   \
     "The penguin shell (•ᴗ•)ゝ\n" \
@@ -38,22 +38,22 @@ static struct option pen_options[] = {
 
 typedef struct {
     char * command;
-    void (*pen_func)(char ** args, history *, pen_alias_table *, size_t);
+    void (*pen_func)(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count);
     char * usage;
 } pen_builtin;
 
 //method that handles execution of the commands
-void waddle(char * base_command, char ** args);
+void waddle(pen_tok_list * tok_list);
 
 //methods to handle build in shell commands
-void pen_exit(char ** args, history * hist, pen_alias_table * alias_table, size_t arg_count);
-void pen_pwd(char ** args, history * hist, pen_alias_table * alias_table, size_t arg_count);
-void pen_cd(char ** args, history * hist, pen_alias_table * alias_table, size_t arg_count);
+void pen_exit(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count);
+void pen_pwd(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count);
+void pen_cd(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count);
 
 //main shell loop commands
 void greet();
 int clean_up(history * hist, pen_alias_table * alias_table);
-void free_tokens(char ** tokens, size_t arg_count);
+void free_tokens(pen_tok_list * tok_list, size_t arg_count);
 int run(int argc, char ** argv);
 
 static pen_builtin pen_builtins[] = {
@@ -67,6 +67,6 @@ static pen_builtin pen_builtins[] = {
     { "xpt", pen_export, "xpt [variable name]=[value], Sets a new environment variable with the specified value.\n"}
 };
 
-pen_builtin * pen_lookup(char ** args);
+pen_builtin * pen_lookup(pen_tok_list * tok_list);
 void handle_help(pen_builtin * builtin);
 #endif //PENGUIN_PENGUIN_MAIN_H

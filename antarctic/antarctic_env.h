@@ -10,6 +10,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include "../pen-lan/lex.h"
 
 //common constants used by penguin go here
 #define MAX_CMMD_LEN 65536
@@ -51,9 +52,9 @@ typedef struct {
 } pen_alias_table;
 
 //environment manipulation library
-void pen_export(char ** args, history * hist, pen_alias_table * alias_table, size_t arg_count);
-void pen_chirp(char ** args, history * hist, pen_alias_table * alias_table, size_t arg_count);
-void pen_unalias(char ** args, history * hist, pen_alias_table * alias_table, size_t arg_count);
+void pen_export(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count);
+void pen_chirp(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count);
+void pen_unalias(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count);
 
 void print_antarctic_vars();
 
@@ -68,7 +69,7 @@ void clear_entry(history_entry * entry);
 
 int add_to_history(history * hist, char * full_cmmd, char * command, char ** args, size_t command_len, size_t arg_count);
 
-void pen_print_history(char ** args, history * hist, pen_alias_table * alias_table, size_t arg_count);
+void pen_print_history(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count);
 
 pen_alias_table * init_alias_table();
 
