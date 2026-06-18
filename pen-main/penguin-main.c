@@ -4,9 +4,55 @@
 //Main REPL loop for the penguin shell
 #include "penguin-main.h"
 
+#define USAGE   \
+    "The penguin shell (•ᴗ•)ゝ\n" \
+    "Run the shell by calling the penguin executable, be sure to set penguin in your path to call from any dir. \n" \
+    "basic commands:\n" \
+    "  alias [alias name]=[alias value]      Creates an alias with the specified name.\n" \
+    "  cd [path]                             Change directory to path (use * for home directory).\n" \
+    "  chirp [environment variable]          Outputs out the value of the specified environment variable.\n" \
+    "  exit                                  Closes the shell.\n"\
+    "  history                               Outputs command history throughout the shell's runtime up to a max of 128 commands (latest commands).\n" \
+    "  pwd                                   Outputs the current working directory.\n" \
+    "  unalias [alias name]                  Deletes the specified alias.\n" \
+    "  xpt [variable name]=[value]           Sets a new environment variable with the specificied value.\n" \
+
+#define ALIAS_USG "alias [alias name]=[alias value], Creates an alias with the specified name.\n"
+#define CD_USG "cd [path], Change directory to path (use * for home directory).\n"
+#define CHRP_USG "chirp [environment variable], Outputs out the value of the specified environment variable.\n"
+#define EXIT_USG "exit, Closes the shell.\n"
+#define HIST_USG "history, Outputs command history throughout the shell's runtime up to a max of 128 commands (latest commands).\n"
+#define PWD_USG "pwd, Outputs the current working directory.\n"
+#define UNALIAS_USG "unalias [alias name], deletes the specified alias.\n"
+#define XPT_USG "xpt [variable name]=[value], Sets a new environment variable with the specified value.\n"
+
+#define BUILT_INS_COUNT (sizeof(pen_builtins) / sizeof(pen_builtin))
+
+static struct option pen_options[] = {
+    {"help", no_argument, NULL, 'h'}
+};
+
+typedef struct {
+    char * command;
+    void (*pen_func)(const pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, const size_t arg_count);
+    char * usage;
+} pen_builtin;
+
+static pen_builtin pen_builtins[] = {
+    {"alias", pen_export, ALIAS_USG},
+    {"cd", pen_cd, CD_USG},
+    { "chirp", pen_chirp, CHRP_USG},
+    {"exit", pen_exit, EXIT_USG},
+    { "history", pen_print_history, HIST_USG},
+    { "pwd", pen_pwd, PWD_USG},
+    {"unalias", pen_unalias, UNALIAS_USG},
+    { "xpt", pen_export, XPT_USG}
+};
+
+
 //SECTION: LOOKUP AND DISPATCH
 //looks up the command in the built in commands and returns a pointer to the function that implements the command, if not found then returns null
-pen_builtin * pen_lookup(pen_tok_list * tok_list) {
+static pen_builtin * pen_lookup(const pen_tok_list * tok_list) {
 
     //algo, first see if first token is less than the first builtin or greater than the last builtin, if not then binary search
     if (strcmp(tok_list->toks[0].text, "alias") >= 0 && strcmp(tok_list->toks[0].text, "xpt") <= 0) {
@@ -40,12 +86,12 @@ pen_builtin * pen_lookup(pen_tok_list * tok_list) {
 
 //SECTION: Helper functions for main shell loop commands
 //helper function for handling the help flag
-void handle_help(pen_builtin * builtin) {
+static void handle_help(const pen_builtin * builtin) {
     fprintf(stdout, "%s", builtin->usage);
 }
 
 //method that handles execution of the commands, if the command is not found then it will print an error message
-void waddle(pen_tok_list * tok_list) {
+static void waddle(const pen_tok_list * tok_list) {
 
     pid_t pid;
     int child_status;
@@ -69,7 +115,7 @@ void waddle(pen_tok_list * tok_list) {
 }
 
 //method that implements the exit built in command, exits the shell and does some clean up before exiting
-void pen_exit(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count) {
+void pen_exit(const pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, const size_t arg_count) {
     clean_up(hist, alias_table);
     free_tokens(tok_list, arg_count);
     printf("\033[38;2;0;255;255m" "Goodbye (•ᴗ•)ゝ\n" "\033[0m");
@@ -77,7 +123,7 @@ void pen_exit(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_t
 }
 
 //method that implements the pwd built in command, prints the current working directory to the user
-void pen_pwd(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count) {
+void pen_pwd(const pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, const size_t arg_count) {
     (void)hist;
     (void)arg_count;
     char cwd[MAX_PATH_LEN] = {0};
@@ -86,7 +132,7 @@ void pen_pwd(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_ta
 }
 
 //method that implements the cd built in command, changes the current working directory to the specified path, if no path is specified then it changes to the home directory
-void pen_cd(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count) {
+void pen_cd(const pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, const size_t arg_count) {
     (void)hist;
     int cd_res = -1;
     if (arg_count < 2 || strcmp(tok_list->toks[1].text, "*") == 0) {
@@ -107,7 +153,7 @@ void pen_cd(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_tab
 
 //SECTION: Main shell loop commands
 //method that parses the options for the shell itself, such as the help flag, if the user enters -h or --help then it will print the usage message and exit
-static void parse_options(int argc, char ** argv) {
+static void parse_options(const int argc, const char ** argv) {
     int option_char = 0;
     while (((option_char) = getopt_long(argc, argv, "h::", pen_options, NULL)) != -1) {
         switch (option_char) {
@@ -123,7 +169,7 @@ static void parse_options(int argc, char ** argv) {
 }
 
 //method that prints the welcome message when the shell is first run
-void greet() {
+static void greet() {
     printf("===========================\n");
     printf("    P  E  N  G  U  I  N    \n");
     printf("===========================\n");
@@ -187,7 +233,7 @@ static char * build_prompt(char * prompt) {
 }
 
 //method that handles cleaning up the resources taken by the shell before exiting, such as the history and alias table
-int clean_up(history * hist, pen_alias_table * alias_table) {
+static int clean_up(history * hist, pen_alias_table * alias_table) {
     for (int i = 0; i < hist->cells_filled; i++) {
         history_entry * entry = hist->entries[i];
         clear_entry(entry);
@@ -200,7 +246,7 @@ int clean_up(history * hist, pen_alias_table * alias_table) {
 }
 
 //method that frees the resources taken by the tokens, such as the memory allocated for the tokens and the memory allocated for the token strings
-void free_tokens(pen_tok_list * tok_list, size_t arg_count) {
+static void free_tokens(pen_tok_list * tok_list, size_t arg_count) {
     for (int i = 0; i < arg_count; i++) {
         free(tok_list->toks[i].text);
     }
