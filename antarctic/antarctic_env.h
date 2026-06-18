@@ -69,7 +69,7 @@ void clear_entry(history_entry * entry);
 
 int add_to_history(history * hist, char * full_cmmd, char * command, char ** args, size_t command_len, size_t arg_count);
 
-void pen_print_history(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count);
+void pen_print_history(const pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count);
 
 pen_alias_table * init_alias_table();
 

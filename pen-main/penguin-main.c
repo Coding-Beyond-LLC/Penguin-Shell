@@ -3,6 +3,7 @@
 //
 //Main REPL loop for the penguin shell
 #include "penguin-main.h"
+#include "../pen-util/pen-util.h"
 
 #define USAGE   \
     "The penguin shell (•ᴗ•)ゝ\n" \
@@ -27,6 +28,7 @@
 #define XPT_USG "xpt [variable name]=[value], Sets a new environment variable with the specified value.\n"
 
 #define BUILT_INS_COUNT (sizeof(pen_builtins) / sizeof(pen_builtin))
+#define PEN_BUILTIN_KEY(b) ((b)->command)
 
 static struct option pen_options[] = {
     {"help", no_argument, NULL, 'h'}
@@ -51,36 +53,10 @@ static pen_builtin pen_builtins[] = {
 
 
 //SECTION: LOOKUP AND DISPATCH
-//looks up the command in the built in commands and returns a pointer to the function that implements the command, if not found then returns null
 static pen_builtin * pen_lookup(const pen_tok_list * tok_list) {
-
-    //algo, first see if first token is less than the first builtin or greater than the last builtin, if not then binary search
-    if (strcmp(tok_list->toks[0].text, "alias") >= 0 && strcmp(tok_list->toks[0].text, "xpt") <= 0) {
-
-        //lowest and highest index of the built in commands
-        int low = 0;
-        int high = BUILT_INS_COUNT - 1;
-
-        while (low <= high) {
-
-            int mid = low + ((high - low) / 2);
-
-            pen_builtin * builtin = &pen_builtins[mid];
-
-            int comp_val = strcmp(tok_list->toks[0].text, builtin->command);
-            if (comp_val == 0) {
-                return builtin;
-            }
-
-            if (comp_val > 0) {
-                low = mid + 1;
-            }else {
-                high = mid - 1;
-            }
-        }
-    }
-
-    return NULL;
+    pen_builtin * result;
+    BINARY_SEARCH(pen_builtins, BUILT_INS_COUNT, tok_list->toks[0].text, PEN_BUILTIN_KEY, result);
+    return result;
 }
 //END SECTION: LOOKUP AND DISPATCH
 
@@ -112,6 +88,29 @@ static void waddle(const pen_tok_list * tok_list) {
     }
 
     wait(&child_status);
+}
+
+//method that handles cleaning up the resources taken by the shell before exiting, such as the history and alias table
+static int clean_up(history * hist, pen_alias_table * alias_table) {
+    for (int i = 0; i < hist->cells_filled; i++) {
+        history_entry * entry = hist->entries[i];
+        clear_entry(entry);
+        free(entry);
+    }
+    free(hist->entries);
+    free(hist);
+    clear_alias_table(alias_table);
+    return 0;
+}
+
+//method that frees the resources taken by the tokens, such as the memory allocated for the tokens and the memory allocated for the token strings
+static void free_tokens(pen_tok_list * tok_list, size_t arg_count) {
+    for (int i = 0; i < arg_count; i++) {
+        free(tok_list->toks[i].text);
+    }
+    free(tok_list->toks);
+    free(tok_list->args);
+    free(tok_list);
 }
 
 //method that implements the exit built in command, exits the shell and does some clean up before exiting
@@ -232,28 +231,6 @@ static char * build_prompt(char * prompt) {
     return prompt;
 }
 
-//method that handles cleaning up the resources taken by the shell before exiting, such as the history and alias table
-static int clean_up(history * hist, pen_alias_table * alias_table) {
-    for (int i = 0; i < hist->cells_filled; i++) {
-        history_entry * entry = hist->entries[i];
-        clear_entry(entry);
-        free(entry);
-    }
-    free(hist->entries);
-    free(hist);
-    clear_alias_table(alias_table);
-    return 0;
-}
-
-//method that frees the resources taken by the tokens, such as the memory allocated for the tokens and the memory allocated for the token strings
-static void free_tokens(pen_tok_list * tok_list, size_t arg_count) {
-    for (int i = 0; i < arg_count; i++) {
-        free(tok_list->toks[i].text);
-    }
-    free(tok_list->toks);
-    free(tok_list->args);
-    free(tok_list);
-}
 //END SECTION: Main shell loop commands
 
 //SECTION: Main method

@@ -9,8 +9,9 @@ add_executable(penguin main.c
         antarctic/antarctic_env.h
         antarctic/antarctic_env.c
         pen-lan/lex.h
-        pen-lan/lex.c)
+        pen-lan/lex.c
+        pen-util/pen-util.h)
 
-target_include_directories(penguin PRIVATE pen-main antarctic pen-lan)
+target_include_directories(penguin PRIVATE pen-main antarctic pen-lan pen-util)
 
 target_link_libraries(penguin PRIVATE readline)
