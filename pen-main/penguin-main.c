@@ -66,28 +66,58 @@ static void handle_help(const pen_builtin * builtin) {
     fprintf(stdout, "%s", builtin->usage);
 }
 
+static char ** flatten_command(const pen_ast_node * command); // defined below
+
+static void apply_redirects(const pen_ast_node * redirect_list) {
+    const pen_ast_node * cur = redirect_list;
+    while (cur->child_count > 0) {
+        const pen_ast_node * redirect  = cur->nodes_children[0];
+        const char *         filename  = redirect->nodes_children[0]->tok->text;
+        pen_tok_type         rtype     = redirect->tok->tok_type;
+
+        int fd;
+        if (rtype == REDIRECT_IN) {
+            fd = open(filename, O_RDONLY);
+        } else if (rtype == REDIRECT_OUT) {
+            fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        } else {
+            fd = open(filename, O_WRONLY | O_CREAT | O_APPEND, 0644);
+        }
+
+        if (fd < 0) {
+            fprintf(stderr, "%s: %s\n", filename, strerror(errno));
+            _exit(1);
+        }
+
+        dup2(fd, rtype == REDIRECT_IN ? STDIN_FILENO : STDOUT_FILENO);
+        close(fd);
+
+        cur = cur->nodes_children[1];
+    }
+}
+
 //method that handles execution of the commands, if the command is not found then it will print an error message
-static void waddle(const pen_tok_list * tok_list) {
+static void waddle(const pen_ast_node * command) {
 
-    pid_t pid;
-    int child_status;
+    char ** argv = flatten_command(command);
+    pid_t pid = fork();
 
-    pid = fork();
-
-    //child executes here
     if (pid < 0) {
         printf("Error executing child! errno: %d\n", errno);
+        free(argv);
         exit(-1);
     }
 
     if (pid == 0) {
-        //execvp call here
-        execvp(tok_list->toks[0].text, tok_list->args);
-        fprintf(stderr, "%s: %s\n", tok_list->toks[0].text, strerror(errno));
+        apply_redirects(command->nodes_children[2]);
+        execvp(argv[0], argv);
+        fprintf(stderr, "%s: %s\n", argv[0], strerror(errno));
         _exit(errno == ENOENT ? 127 : 126);
     }
 
+    int child_status;
     wait(&child_status);
+    free(argv);
 }
 
 //method that handles cleaning up the resources taken by the shell before exiting, such as the history and alias table
@@ -152,7 +182,7 @@ void pen_cd(const pen_tok_list * tok_list, history * hist, pen_alias_table * ali
 
 //SECTION: Main shell loop commands
 //method that parses the options for the shell itself, such as the help flag, if the user enters -h or --help then it will print the usage message and exit
-static void parse_options(const int argc, const char ** argv) {
+static void parse_options(const int argc, char ** argv) {
     int option_char = 0;
     while (((option_char) = getopt_long(argc, argv, "h::", pen_options, NULL)) != -1) {
         switch (option_char) {
@@ -186,12 +216,12 @@ static void record_history(history *hist, char *cmmd, pen_tok_list * tok_list, s
     add_to_history(hist, cmmd, tok_list->toks[0].text, tok_list->args, strlen(cmmd), arg_count);
 }
 
-static void dispatch_command(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count) {
+static void dispatch_command(const pen_ast_node * command, pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count) {
 
     pen_builtin * builtin = pen_lookup(tok_list);
 
     if(builtin == NULL) {
-        waddle(tok_list);
+        waddle(command);
         return;
     }
 
@@ -203,19 +233,141 @@ static void dispatch_command(pen_tok_list * tok_list, history * hist, pen_alias_
     builtin->pen_func(tok_list, hist, alias_table, arg_count);
 }
 
+//counts how many command stages the pipeline holds by walking the PIPE_TAIL chain
+static size_t pipeline_stage_count(const pen_ast_node * pipeline) {
+    size_t count = 1;                                       // the leading <command>
+    const pen_ast_node * tail = pipeline->nodes_children[1]; // <pipe_tail>
+    while (tail->child_count > 0) {                         // PIPE <command> <pipe_tail>
+        count++;
+        tail = tail->nodes_children[1];                     // step to the next <pipe_tail>
+    }
+    return count;
+}
+
+static size_t count_args(const pen_ast_node * arg_list) {
+    size_t count = 0;
+    const pen_ast_node * cur = arg_list;
+    while (cur->child_count > 0) {
+        count++;
+        cur = cur->nodes_children[1];
+    }
+    return count;
+}
+
+// Returns a malloc'd NULL-terminated argv; strings are borrowed from the AST (do not free them)
+static char ** flatten_command(const pen_ast_node * command) {
+    const pen_ast_node * exec_node = command->nodes_children[0];
+    const pen_ast_node * arg_list  = command->nodes_children[1];
+    size_t argc = 1 + count_args(arg_list);
+    char ** argv = malloc(sizeof(char *) * (argc + 1));
+    argv[0] = exec_node->tok->text;
+    const pen_ast_node * cur = arg_list;
+    for (size_t i = 1; i < argc; i++) {
+        argv[i] = cur->nodes_children[0]->tok->text;
+        cur = cur->nodes_children[1];
+    }
+    argv[argc] = NULL;
+    return argv;
+}
+
+static void execute_pipeline(const pen_ast_node * pipeline, size_t stage_count) {
+    pen_ast_node ** commands = malloc(sizeof(pen_ast_node *) * stage_count);
+    commands[0] = pipeline->nodes_children[0];
+    const pen_ast_node * tail = pipeline->nodes_children[1];
+    for (size_t i = 1; i < stage_count; i++) {
+        commands[i] = tail->nodes_children[0];
+        tail = tail->nodes_children[1];
+    }
+
+    int (*pipes)[2] = malloc(sizeof(int[2]) * (stage_count - 1));
+    for (size_t i = 0; i < stage_count - 1; i++) {
+        if (pipe(pipes[i]) < 0) {
+            fprintf(stderr, "penguin: pipe: %s\n", strerror(errno));
+            free(commands);
+            free(pipes);
+            return;
+        }
+    }
+
+    pid_t * pids = malloc(sizeof(pid_t) * stage_count);
+
+    for (size_t i = 0; i < stage_count; i++) {
+        char ** argv = flatten_command(commands[i]);
+        pids[i] = fork();
+        if (pids[i] < 0) {
+            fprintf(stderr, "penguin: fork: %s\n", strerror(errno));
+            free(argv);
+            break;
+        }
+        if (pids[i] == 0) {
+            if (i > 0)               dup2(pipes[i - 1][0], STDIN_FILENO);
+            if (i < stage_count - 1) dup2(pipes[i][1],     STDOUT_FILENO);
+            for (size_t j = 0; j < stage_count - 1; j++) {
+                close(pipes[j][0]);
+                close(pipes[j][1]);
+            }
+            apply_redirects(commands[i]->nodes_children[2]);
+            execvp(argv[0], argv);
+            fprintf(stderr, "%s: %s\n", argv[0], strerror(errno));
+            _exit(errno == ENOENT ? 127 : 126);
+        }
+        free(argv);
+    }
+
+    for (size_t i = 0; i < stage_count - 1; i++) {
+        close(pipes[i][0]);
+        close(pipes[i][1]);
+    }
+    for (size_t i = 0; i < stage_count; i++) {
+        int status;
+        waitpid(pids[i], &status, 0);
+    }
+
+    free(commands);
+    free(pipes);
+    free(pids);
+}
+
+//walks the parsed line and runs it; single commands reuse the existing dispatch path
+static void execute_line(pen_ast_node * line, pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table) {
+
+    if (line->child_count == 0) return;                     // empty line, nothing to run
+
+    pen_ast_node * pipeline = line->nodes_children[0];
+    size_t stages = pipeline_stage_count(pipeline);
+
+    if (stages == 1) {
+        pen_ast_node * command = pipeline->nodes_children[0];
+        dispatch_command(command, tok_list, hist, alias_table, tok_list->n);
+    } else {
+        execute_pipeline(pipeline, stages);
+    }
+}
+
 static void process_line(char * cmmd, history * hist, pen_alias_table * alias_table) {
 
     pen_tok_list * tok_list = tokenize(cmmd, strlen(cmmd));
 
-    //empty command, just free the tokens and return
+    //blank line, just free the tokens and return
     if(tok_list->n == 0) {
         free_tokens(tok_list, tok_list->n);
         return;
     }
 
+    //record every non-empty line, the way a shell keeps everything you typed
     record_history(hist, cmmd, tok_list, tok_list->n);
-    dispatch_command(tok_list, hist, alias_table, tok_list->n);
-    free_tokens(tok_list, tok_list->n);
+
+    pen_ast_node * line = parse(tok_list);
+    if (line == NULL) {                     // "| ls", "ls |", or a token the grammar can't take yet
+        fprintf(stderr, "penguin: syntax error\n");
+        free_tokens(tok_list, tok_list->n);
+        return;
+    }
+
+    execute_line(line, tok_list, hist, alias_table);
+
+    free_ast(line);                         // frees the nodes (token text is borrowed, not freed here)
+    free_tokens(tok_list, tok_list->n);     // frees the token text and the backing arrays
 }
 
 static char * build_prompt(char * prompt) {

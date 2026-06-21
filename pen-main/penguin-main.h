@@ -12,10 +12,12 @@
 #include <errno.h>
 #include <sys/wait.h>
 #include <getopt.h>
+#include <fcntl.h>
 #include <readline/readline.h>
 #include <readline/history.h>
 #include "../antarctic/antarctic_env.h"
 #include "../pen-lan/lex.h"
+#include "../pen-lan/parse.h"
 
 //methods to handle build in shell commands
 void pen_exit(const pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count);

@@ -29,11 +29,11 @@ static void flush(char * input, pen_tok_list * tok_list, size_t input_start_tok_
     text[tok_len] = '\0';
 
     //set the token type
-    if(strcmp(text, "|") == 0){
-        tok->tok_type = PIPE;
-    }else{
-        tok->tok_type = WORD;
-    }
+    if      (strcmp(text, "|")  == 0) tok->tok_type = PIPE;
+    else if (strcmp(text, ">")  == 0) tok->tok_type = REDIRECT_OUT;
+    else if (strcmp(text, "<")  == 0) tok->tok_type = REDIRECT_IN;
+    else if (strcmp(text, ">>") == 0) tok->tok_type = REDIRECT_APPEND;
+    else                              tok->tok_type = WORD;
 }
 
 static void set_args(pen_tok_list * tok_list) {
