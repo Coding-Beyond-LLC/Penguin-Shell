@@ -11,10 +11,12 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <sys/wait.h>
+#include <sys/types.h>
 #include <getopt.h>
 #include <fcntl.h>
 #include <readline/readline.h>
 #include <readline/history.h>
+#include <pwd.h>
 #include "../antarctic/antarctic_env.h"
 #include "../pen-lan/lex.h"
 #include "../pen-lan/parse.h"

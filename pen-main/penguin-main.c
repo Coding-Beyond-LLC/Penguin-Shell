@@ -377,8 +377,18 @@ static char * build_prompt(char * prompt) {
     //get the current working directory
     getcwd(cwd, MAX_PATH_LEN);
 
+    char user[MAX_PATH_LEN] = {0};
+    char host[MAX_PATH_LEN] = {0};
+
+    //get host name
+    gethostname(host, sizeof(host));
+
+    //get user id
+    uid_t uid = getuid();
+    struct passwd *pw = getpwuid(uid);
+
     //print the prompt with the current working directory
-    snprintf(prompt, MAX_PATH_LEN + 38, "\033[38;2;0;255;255m" "%s (•ᴗ•)ゝ " "\033[0m", cwd);
+    snprintf(prompt, MAX_PATH_LEN + 39, "\033[38;2;0;255;255m" "%s@%s%s (•ᴗ•)ゝ " "\033[0m", host, pw->pw_name, cwd);
 
     return prompt;
 }
