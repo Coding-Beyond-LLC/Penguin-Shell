@@ -20,8 +20,10 @@
 #include "../pen-lan/parse.h"
 
 //methods to handle build in shell commands
-void pen_exit(const pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count);
-void pen_pwd(const pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count);
-void pen_cd(const pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count);
+void pen_exit(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count);
+void pen_pwd(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count);
+void pen_cd(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count);
+
+int run(int argc, char ** argv);
 
 #endif //PENGUIN_PENGUIN_MAIN_H

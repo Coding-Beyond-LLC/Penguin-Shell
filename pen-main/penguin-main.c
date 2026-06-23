@@ -36,7 +36,7 @@ static struct option pen_options[] = {
 
 typedef struct {
     char * command;
-    void (*pen_func)(const pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, const size_t arg_count);
+    void (*pen_func)(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, const size_t arg_count);
     char * usage;
 } pen_builtin;
 
@@ -144,7 +144,7 @@ static void free_tokens(pen_tok_list * tok_list, size_t arg_count) {
 }
 
 //method that implements the exit built in command, exits the shell and does some clean up before exiting
-void pen_exit(const pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, const size_t arg_count) {
+void pen_exit(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, const size_t arg_count) {
     clean_up(hist, alias_table);
     free_tokens(tok_list, arg_count);
     printf("\033[38;2;0;255;255m" "Goodbye (•ᴗ•)ゝ\n" "\033[0m");
@@ -152,7 +152,7 @@ void pen_exit(const pen_tok_list * tok_list, history * hist, pen_alias_table * a
 }
 
 //method that implements the pwd built in command, prints the current working directory to the user
-void pen_pwd(const pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, const size_t arg_count) {
+void pen_pwd(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, const size_t arg_count) {
     (void)hist;
     (void)arg_count;
     char cwd[MAX_PATH_LEN] = {0};
@@ -161,7 +161,7 @@ void pen_pwd(const pen_tok_list * tok_list, history * hist, pen_alias_table * al
 }
 
 //method that implements the cd built in command, changes the current working directory to the specified path, if no path is specified then it changes to the home directory
-void pen_cd(const pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, const size_t arg_count) {
+void pen_cd(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, const size_t arg_count) {
     (void)hist;
     int cd_res = -1;
     if (arg_count < 2 || strcmp(tok_list->toks[1].text, "*") == 0) {

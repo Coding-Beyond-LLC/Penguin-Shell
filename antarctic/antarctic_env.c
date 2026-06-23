@@ -86,7 +86,7 @@ void clear_alias_table(pen_alias_table * alias_table) {
     free(alias_table);
 }
 
-void pen_export(const pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count){
+void pen_export(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count){
 
     //the scheme will be something like VAR_NAME=String
     //so to verify that it's a valid variable entry we can just do a simple
@@ -144,7 +144,7 @@ void pen_export(const pen_tok_list * tok_list, history * hist, pen_alias_table *
 
 }
 
-void pen_chirp(const pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count) {
+void pen_chirp(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count) {
 
     (void)hist;
 
@@ -161,7 +161,7 @@ void pen_chirp(const pen_tok_list * tok_list, history * hist, pen_alias_table * 
     }
 }
 
-void pen_unalias(const pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count) {
+void pen_unalias(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count) {
     (void) hist;
     if (arg_count < 2) {
         return;
@@ -260,7 +260,7 @@ int add_to_history(history * hist, char * full_cmmd, char * command, char ** arg
     return 0;
 }
 
-void pen_print_history(const pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count) {
+void pen_print_history(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count) {
     (void)arg_count;
     for (int i = 0; i < hist->cells_filled; i++) {
         printf("%s\n", (*(hist->entries + i))->full_cmmd);

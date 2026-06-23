@@ -56,11 +56,14 @@ pen_tok_list * tokenize(char * input, size_t n) {
     size_t input_start_tok_idx = 0;
     size_t tok_idx = 0;
     size_t tok_len = 0;
+    
+    int quote_flag = 0;
 
     // second pass to actually tokenize the input string
     while(idx < n){
 
-        if(input[idx] == ' ' || input[idx] == '\t' || input[idx] == '\n'){
+
+        if((input[idx] == ' ' || input[idx] == '\t' || input[idx] == '\n') && !quote_flag){
 
             if(tok_len > 0) {
                 flush(input, tok_list, input_start_tok_idx, tok_idx, tok_len);
@@ -73,6 +76,10 @@ pen_tok_list * tokenize(char * input, size_t n) {
             idx++;
 
             continue;
+        }
+
+        if(input[idx] == '"'){
+            quote_flag = !quote_flag;
         }
 
         tok_len++;
