@@ -20,6 +20,7 @@
 #include "../antarctic/antarctic_env.h"
 #include "../pen-lan/lex.h"
 #include "../pen-lan/parse.h"
+#include "../pen-lan/expand.h"
 
 //methods to handle build in shell commands
 void pen_exit(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count);

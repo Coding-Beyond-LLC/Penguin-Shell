@@ -354,20 +354,23 @@ static void process_line(char * cmmd, history * hist, pen_alias_table * alias_ta
         return;
     }
 
-    //record every non-empty line, the way a shell keeps everything you typed
-    record_history(hist, cmmd, tok_list, tok_list->n);
+    pen_tok_list * expanded_tok_list = expand_aliases(tok_list, alias_table);
 
-    pen_ast_node * line = parse(tok_list);
+    //record every non-empty line, the way a shell keeps everything you typed
+    record_history(hist, cmmd, expanded_tok_list, expanded_tok_list->n);
+
+    pen_ast_node * line = parse(expanded_tok_list);
     if (line == NULL) {                     // "| ls", "ls |", or a token the grammar can't take yet
         fprintf(stderr, "penguin: syntax error\n");
-        free_tokens(tok_list, tok_list->n);
+        free_tokens(expanded_tok_list, expanded_tok_list->n);
         return;
     }
 
-    execute_line(line, tok_list, hist, alias_table);
+    execute_line(line, expanded_tok_list, hist, alias_table);
 
     free_ast(line);                         // frees the nodes (token text is borrowed, not freed here)
-    free_tokens(tok_list, tok_list->n);     // frees the token text and the backing arrays
+    free_tokens(tok_list, tok_list->n);
+    free_tokens(expanded_tok_list, expanded_tok_list->n);     // frees the token text and the backing arrays
 }
 
 static char * build_prompt(char * prompt) {
