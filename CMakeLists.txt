@@ -12,8 +12,10 @@ add_executable(penguin main.c
         pen-lan/lex.c
         pen-lan/parse.h
         pen-lan/parse.c
-        pen-util/pen-util.h
-        pen-lan/lan_structs.h)
+        pen-lan/expand.h
+        pen-lan/expand.c
+        pen-lan/lan_structs.h
+        pen-util/pen-util.h)
 
 target_include_directories(penguin PRIVATE pen-main antarctic pen-lan pen-util)
 
