@@ -1,0 +1,13 @@
+name: Deploy Penguin to Cluster
+on:
+  push:
+    branches: main
+jobs:
+  deploy:
+    runs-on: [self-hosted, blade1]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and deploy to blades
+        run: deploy.sh
+        env:
+          SRC: ${{ github.workspace }}
