@@ -34,6 +34,6 @@ Prints out the list of built in commands for the penguin shell
 ==========================
     P  E  N  G  U  I  N
 ==========================
-\home\user\(•ᴗ•)ゝ COMMAND
+user@host#\home\user\(•ᴗ•)ゝ COMMAND
 ```
 Penguin utilizes the environment variables from the shell under which it's launched for now.
