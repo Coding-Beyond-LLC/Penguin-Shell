@@ -10,4 +10,5 @@ jobs:
       - name: Build and deploy to blades
         run: chmod +x deploy.sh && bash ./deploy.sh
         env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
           SRC: ${{ github.workspace }}
