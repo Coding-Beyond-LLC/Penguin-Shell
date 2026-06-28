@@ -12,7 +12,7 @@ cmake --build "$BUILD"
 
 mkdir -p "$DEST"
 install -m 755 "$BUILD/$BIN" "$DEST/$BIN"
-echo "nateblanquel@slice1: OK"
+echo "nateblanquel@blade1: OK"
 
 for s in "${PEERS[@]}"; do
     (
