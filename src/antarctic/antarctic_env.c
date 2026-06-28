@@ -183,6 +183,61 @@ history * init_history() {
     for (int i = 0; i < HISTORY_LIM; i++) {
         *(hist->entries + i) = NULL;
     }
+
+    const char * home = getenv("HOME");
+    if (home == NULL) {
+        struct passwd *pwd = getpwuid(getuid());
+        if (pwd != NULL) home = pwd->pw_dir;
+    }
+
+    if (home != NULL) {
+
+        char * pen_hist_file_name = malloc(strlen(home) + 14);
+        strcpy(pen_hist_file_name, home);
+        strcat(pen_hist_file_name, "/.pen_history");
+
+        int fd = open(pen_hist_file_name, O_RDWR, 0666);
+
+        if(fd == -1){
+            printf("No .pen_history file, creating new one :)\n");
+        }else{
+
+            FILE * stream = fdopen(fd, "r");
+
+            if(stream == NULL){
+                printf("Failed to read line from .pen_history :(\n");
+            }else{
+
+                char * line = NULL;
+                size_t len = 0;
+
+                while(getline(&line, &len, stream) != -1){
+
+                    line[strcspn(line, "\n")] = '\0';
+
+                    pen_tok_list * tok_list = tokenize(line, strlen(line));
+
+                    if (tok_list->n > 0) {
+                        add_to_history(hist, line, tok_list->toks[0].text,
+                            tok_list->args, strlen(line), tok_list->n);
+                    }
+
+                    for (size_t i = 0; i < tok_list->n; i++) free(tok_list->toks[i].text);
+
+                    free(tok_list->toks);
+                    free(tok_list->args);
+                    free(tok_list);
+                }
+                free(line);
+                fclose(stream);
+            }
+        }
+
+        close(fd);
+        free(pen_hist_file_name);
+
+    }
+
     return hist;
 }
 
@@ -225,7 +280,7 @@ static void persist_history(history * hist){
         strcpy(pen_hist_file_name, home);
         strcat(pen_hist_file_name, "/.pen_history");
 
-        int fd = open(pen_hist_file_name, O_CREAT | O_RDWR, 0777);
+        int fd = open(pen_hist_file_name, O_CREAT | O_RDWR, 0666);
 
         if(fd == -1){
             printf("Error saving history %d\n", errno);
