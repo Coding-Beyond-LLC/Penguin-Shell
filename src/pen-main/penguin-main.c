@@ -4,6 +4,7 @@
 //Main REPL loop for the penguin shell
 #include "penguin-main.h"
 #include "../pen-util/pen-util.h"
+#include <readline/history.h>
 
 #define USAGE   \
     "The penguin shell (•ᴗ•)ゝ\n" \
@@ -122,13 +123,7 @@ static void waddle(const pen_ast_node * command) {
 
 //method that handles cleaning up the resources taken by the shell before exiting, such as the history and alias table
 static int clean_up(history * hist, pen_alias_table * alias_table) {
-    for (int i = 0; i < hist->cells_filled; i++) {
-        history_entry * entry = hist->entries[i];
-        clear_entry(entry);
-        free(entry);
-    }
-    free(hist->entries);
-    free(hist);
+    clean_history(hist);
     clear_alias_table(alias_table);
     return 0;
 }
@@ -391,7 +386,7 @@ static char * build_prompt(char * prompt) {
     struct passwd *pw = getpwuid(uid);
 
     //print the prompt with the current working directory
-    snprintf(prompt, MAX_PATH_LEN + 40, "\033[38;2;0;255;255m" "%s@%s#%s (•ᴗ•)ゝ " "\033[0m", pw->pw_name, host, cwd);
+    snprintf(prompt, MAX_PATH_LEN + 256, "\001\033[38;2;0;255;255m" "%.32s@%.32s#%s (•ᴗ•)ゝ " "\033[0m\002", pw->pw_name, host, cwd);
 
     return prompt;
 }

@@ -3,6 +3,9 @@
 //
 
 #include "antarctic_env.h"
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
 
 pen_alias_table * init_alias_table() {
     pen_alias_table * alias_table = malloc(sizeof(pen_alias_table));
@@ -208,6 +211,45 @@ history_entry * init_entry(size_t command_len, size_t arg_count) {
     return new_entry;
 }
 
+static void persist_history(history * hist){
+
+    const char * home = getenv("HOME");
+    if (home == NULL) {
+        struct passwd *pwd = getpwuid(getuid());
+        if (pwd != NULL) home = pwd->pw_dir;
+    }
+
+    if (home != NULL) {
+
+        char * pen_hist_file_name = malloc(strlen(home) + 14);
+        strcpy(pen_hist_file_name, home);
+        strcat(pen_hist_file_name, "/.pen_history");
+
+        int fd = open(pen_hist_file_name, O_CREAT | O_RDWR, 0777);
+
+        if(fd == -1){
+            printf("Error saving history %d\n", errno);
+        }else{
+            if(ftruncate(fd, 0) == - 1){
+                printf("Error saving history %d\n", errno);
+            }
+
+            if(fd != -1){
+                for(size_t i = 0; i < hist->cells_filled; i++){
+                    write(fd, hist->entries[i]->full_cmmd, strlen(hist->entries[i]->full_cmmd));
+                    write(fd, "\n", 1);
+                }
+            }
+
+            close(fd);
+        }
+
+        free(pen_hist_file_name);
+    }
+
+
+}
+
 void fill_entry(history_entry ** entry, char * full_cmmd, char * command, char ** args, size_t command_len, size_t arg_count) {
     memcpy((*entry)->full_cmmd, full_cmmd, command_len);
     memcpy((*entry)->command, command, strlen(command));
@@ -216,7 +258,7 @@ void fill_entry(history_entry ** entry, char * full_cmmd, char * command, char *
     }
 }
 
-void clear_entry(history_entry * entry) {
+static void clear_entry(history_entry * entry) {
     free(entry->full_cmmd);
     free(entry->command);
     for (int i = 0; i < entry->arg_count; i++) {
@@ -224,6 +266,19 @@ void clear_entry(history_entry * entry) {
     }
     free(entry->args);
 }
+
+void clean_history(history * hist){
+    persist_history(hist);
+    for (int i = 0; i < hist->cells_filled; i++) {
+        history_entry * entry = hist->entries[i];
+        clear_entry(entry);
+        free(entry);
+    }
+    free(hist->entries);
+    free(hist);
+}
+
+
 
 //TODO handle duplicate or empty case
 int add_to_history(history * hist, char * full_cmmd, char * command, char ** args, size_t command_len, size_t arg_count) {

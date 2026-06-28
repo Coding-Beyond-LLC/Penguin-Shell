@@ -10,6 +10,9 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <pwd.h>
 #include "../pen-lan/lex.h"
 
 //common constants used by penguin go here
@@ -65,11 +68,11 @@ history_entry * init_entry(size_t command_len, size_t arg_count);
 
 void fill_entry(history_entry ** entry, char * full_cmmd, char * command, char ** args, size_t command_len, size_t arg_count);
 
-void clear_entry(history_entry * entry);
-
 int add_to_history(history * hist, char * full_cmmd, char * command, char ** args, size_t command_len, size_t arg_count);
 
 void pen_print_history(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count);
+
+void clean_history(history * hist);
 
 pen_alias_table * init_alias_table();
 
