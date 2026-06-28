@@ -386,7 +386,7 @@ static char * build_prompt(char * prompt) {
     struct passwd *pw = getpwuid(uid);
 
     //print the prompt with the current working directory
-    snprintf(prompt, MAX_PATH_LEN + 256, "\001\033[38;2;0;255;255m" "%.32s@%.32s#%s (•ᴗ•)ゝ " "\033[0m\002", pw->pw_name, host, cwd);
+    snprintf(prompt, MAX_PATH_LEN + 256, "\001\033[38;2;0;255;255m\002" "%.32s@%.32s#%s (•ᴗ•)ゝ " "\001\033[0m\002", pw->pw_name, host, cwd);
 
     return prompt;
 }
