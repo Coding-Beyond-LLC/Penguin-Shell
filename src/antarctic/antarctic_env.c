@@ -3,6 +3,7 @@
 //
 
 #include "antarctic_env.h"
+#include <readline/history.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -218,6 +219,7 @@ history * init_history() {
                     pen_tok_list * tok_list = tokenize(line, strlen(line));
 
                     if (tok_list->n > 0) {
+                        add_history(line);
                         add_to_history(hist, line, tok_list->toks[0].text,
                             tok_list->args, strlen(line), tok_list->n);
                     }

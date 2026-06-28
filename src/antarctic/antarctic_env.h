@@ -13,6 +13,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <pwd.h>
+#include <readline/history.h>
 #include "../pen-lan/lex.h"
 
 //common constants used by penguin go here
