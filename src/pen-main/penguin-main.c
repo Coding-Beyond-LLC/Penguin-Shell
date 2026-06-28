@@ -206,9 +206,8 @@ static int is_help_flag(const char * arg) {
 static void record_history(history *hist, char *cmmd, pen_tok_list * tok_list, size_t arg_count) {
 
     if (*cmmd) add_history(cmmd); // this adds the command to the readline history in order to support the up and down arrow keys for navigating through command history
-
-    if(strcmp(tok_list->toks[0].text, "history") == 0) return;
     add_to_history(hist, cmmd, tok_list->toks[0].text, tok_list->args, strlen(cmmd), arg_count);
+
 }
 
 static void dispatch_command(const pen_ast_node * command, pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count) {
