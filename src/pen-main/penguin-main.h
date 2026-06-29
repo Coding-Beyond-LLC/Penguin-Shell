@@ -26,6 +26,7 @@
 void pen_exit(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count);
 void pen_pwd(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count);
 void pen_cd(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count);
+void pen_help(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count);
 
 int run(int argc, char ** argv);
 

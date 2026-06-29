@@ -46,6 +46,7 @@ static pen_builtin pen_builtins[] = {
     {"cd", pen_cd, CD_USG},
     { "chirp", pen_chirp, CHRP_USG},
     {"exit", pen_exit, EXIT_USG},
+    {"help", pen_help, USAGE},
     { "history", pen_print_history, HIST_USG},
     { "pwd", pen_pwd, PWD_USG},
     {"unalias", pen_unalias, UNALIAS_USG},
@@ -172,6 +173,14 @@ void pen_cd(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_tab
         }
     }
 
+}
+
+void pen_help(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count){
+    (void) tok_list;
+    (void) hist;
+    (void) alias_table;
+    (void) arg_count;
+    fprintf(stdout, "%s", USAGE);
 }
 //END SECTION: Helper functions for main shell loop commands
 
@@ -349,22 +358,26 @@ static void process_line(char * cmmd, history * hist, pen_alias_table * alias_ta
     }
 
     pen_tok_list * expanded_tok_list = expand_aliases(tok_list, alias_table);
+    pen_tok_list * expanded_tok_list_with_vars = expand_env_vars(expanded_tok_list);
 
     //record every non-empty line, the way a shell keeps everything you typed
+    //we record the original input pre variable resolution
     record_history(hist, cmmd, expanded_tok_list, expanded_tok_list->n);
 
-    pen_ast_node * line = parse(expanded_tok_list);
+    pen_ast_node * line = parse(expanded_tok_list_with_vars);
     if (line == NULL) {                     // "| ls", "ls |", or a token the grammar can't take yet
         fprintf(stderr, "penguin: syntax error\n");
         free_tokens(expanded_tok_list, expanded_tok_list->n);
+        free_tokens(expanded_tok_list_with_vars, expanded_tok_list_with_vars->n);
         return;
     }
 
-    execute_line(line, expanded_tok_list, hist, alias_table);
+    execute_line(line, expanded_tok_list_with_vars, hist, alias_table);
 
     free_ast(line);                         // frees the nodes (token text is borrowed, not freed here)
     free_tokens(tok_list, tok_list->n);
     free_tokens(expanded_tok_list, expanded_tok_list->n);     // frees the token text and the backing arrays
+    free_tokens(expanded_tok_list_with_vars, expanded_tok_list_with_vars->n);
 }
 
 static char * build_prompt(char * prompt) {

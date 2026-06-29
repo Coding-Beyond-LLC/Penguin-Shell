@@ -1,7 +1,8 @@
 #include "expand.h"
+#include "lan_structs.h"
 #include <stdlib.h>
 #include <string.h>
- 
+
 // local string dup so we don't depend on strdup's feature-test macros under -std=c23
 static char * dup_str(const char * s) {
     size_t len = strlen(s);
@@ -63,4 +64,41 @@ pen_tok_list * expand_aliases(pen_tok_list * tok_list, pen_alias_table * alias_t
  
     return out;
 }
- 
+
+pen_tok_list * expand_env_vars(pen_tok_list * tok_list){
+
+    pen_tok_list * out = malloc(sizeof(pen_tok_list));
+    out->toks = NULL;
+    out->args = NULL;
+    out->n = 0;
+    size_t cap = 0;
+
+    for(size_t i = 0; i < tok_list->n; i++){
+
+        char * env_var_value = NULL;
+
+        if(tok_list->toks[i].tok_type == ENV_VAR){
+            size_t env_var_name_len = strlen(tok_list->toks[i].text) - 1;
+            char * env_var_name = malloc(env_var_name_len + 1);
+            memcpy(env_var_name, tok_list->toks[i].text + 1, env_var_name_len);
+            env_var_name[env_var_name_len] = '\0';
+            env_var_value = getenv(env_var_name);
+            free(env_var_name);
+        }
+
+        if(env_var_value != NULL){
+            push_tok(out, &cap, dup_str(env_var_value), WORD);
+        }else{
+            push_tok(out, &cap, dup_str(tok_list->toks[i].text), tok_list->toks[i].tok_type);
+        }
+    }
+
+    // build the NULL-terminated args view execvp wants, borrowing the token strings
+    out->args = malloc((out->n + 1) * sizeof(char *));
+    for (size_t i = 0; i < out->n; i++) {
+        out->args[i] = out->toks[i].text;
+    }
+    out->args[out->n] = NULL;
+
+    return out;
+}

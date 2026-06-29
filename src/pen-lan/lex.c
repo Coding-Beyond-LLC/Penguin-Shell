@@ -1,4 +1,5 @@
 #include "lex.h"
+#include "lan_structs.h"
 #include <stdlib.h>
 #include <string.h>
  
@@ -40,6 +41,7 @@ static void flush(char * input, pen_tok_list * tok_list, size_t input_start_tok_
     else if (strcmp(tok->text, ">")  == 0) tok->tok_type = REDIRECT_OUT;
     else if (strcmp(tok->text, "<")  == 0) tok->tok_type = REDIRECT_IN;
     else if (strcmp(tok->text, ">>") == 0) tok->tok_type = REDIRECT_APPEND;
+    else if (tok->text[0] == '$') tok->tok_type = ENV_VAR;
     else                                   tok->tok_type = WORD;
 }
  

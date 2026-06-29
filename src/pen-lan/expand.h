@@ -7,4 +7,6 @@
 
 pen_tok_list * expand_aliases(pen_tok_list * tok_list, pen_alias_table * alias_table);
 
+pen_tok_list * expand_env_vars(pen_tok_list * tok_list);
+
 #endif
