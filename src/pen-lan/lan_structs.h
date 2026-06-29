@@ -12,7 +12,8 @@ typedef enum {
     REDIRECT_APPEND,
     AND_IF,
     SEMI,
-    ENV_VAR
+    ENV_VAR,
+    EQ
 } pen_tok_type;
 
 typedef struct {

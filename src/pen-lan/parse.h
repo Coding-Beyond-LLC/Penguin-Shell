@@ -15,7 +15,10 @@ typedef enum {
     EXEC,
     ARG,
     REDIRECT_LIST,
-    REDIRECT
+    REDIRECT,
+    STMT,
+    WORD_NODE,
+    OP
 } node_type;
 
 struct pen_ast_node {

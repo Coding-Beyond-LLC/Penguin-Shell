@@ -65,10 +65,47 @@ static pen_ast_node * generate_exec_node(parser * p) {
     return node;
 }
 
-// <arg> ::= WORD
+// <stmt> ::= WORD EQ WORD
+static pen_ast_node * generate_stmt_node(parser * p) {
+    pen_ast_node * node = new_node(STMT);
+    alloc_children(node, 3);
+    node->nodes_children[0] = NULL;
+    node->nodes_children[1] = NULL;
+    node->nodes_children[2] = NULL;
+
+    pen_ast_node * var_node = new_node(WORD_NODE);
+    var_node->tok = advance(p);
+    node->nodes_children[0] = var_node;
+
+    if (!check(p, EQ)) {
+        p->error = 1;
+        return node;
+    }
+    pen_ast_node * eq_node = new_node(OP);
+    eq_node->tok = advance(p);
+    node->nodes_children[1] = eq_node;
+
+    if (!check(p, WORD)) {
+        p->error = 1;
+        return node;
+    }
+    pen_ast_node * val_node = new_node(WORD_NODE);
+    val_node->tok = advance(p);
+    node->nodes_children[2] = val_node;
+
+    return node;
+}
+
+// <arg> ::= WORD | <stmt>
 static pen_ast_node * generate_arg_node(parser * p) {
+    // only treat as assignment if WORD is immediately followed by EQ
+    if (check(p, WORD) &&
+        p->pos + 1 < p->toks->n &&
+        p->toks->toks[p->pos + 1].tok_type == EQ) {
+        return generate_stmt_node(p);
+    }
     pen_ast_node * node = new_node(ARG);
-    node->tok = advance(p);       // only reached when the caller saw a WORD
+    node->tok = advance(p);
     return node;
 }
 

@@ -101,52 +101,15 @@ void pen_export(pen_tok_list * tok_list, history * hist, pen_alias_table * alias
 
     (void)hist;
 
-    if (arg_count < 2) {
+    if (tok_list->n < 4) {
         return;
-    }
-
-    char * new_var = *(tok_list->args + 1);
-
-    size_t length_to_parse = strlen(new_var);
-
-    int total_chars_parsed = 0;
-    char * curr_char = new_var;
-    char name[VAR_NAME_LIM] = {0};
-    char value[VAR_VAL_LIM] = {0};
-
-    //parse out the var name
-    while (total_chars_parsed < length_to_parse && *(curr_char) != '=') {
-        *(name + total_chars_parsed) = *(curr_char);
-        total_chars_parsed = total_chars_parsed + 1;
-        curr_char = curr_char + 1;
-    }
-
-    //check if the = is present
-    if (*(curr_char) == '=') {
-        curr_char = curr_char + 1;
-        total_chars_parsed = total_chars_parsed + 1;
-    }else {
-        return;
-    }
-    //check if there are characters remaining after =
-    if (total_chars_parsed >= length_to_parse) {
-        return;
-    }
-
-    //parse out the var value
-    int var_char_counter = 0;
-    while (total_chars_parsed < strlen(new_var) && var_char_counter < VAR_VAL_LIM) {
-        *(value + var_char_counter) = *(curr_char);
-        var_char_counter = var_char_counter + 1;
-        curr_char = curr_char + 1;
-        total_chars_parsed = total_chars_parsed + 1;
     }
 
     //set the var value
-    if (strcmp(*(tok_list->args), "xpt") == 0) {
-        setenv(name, value, 1);
-    }else if (strcmp(*(tok_list->args), "alias") == 0) {
-        add_alias(alias_table, name, value);
+    if (strcmp(tok_list->toks[0].text, "xpt") == 0) {
+        setenv(tok_list->toks[1].text, tok_list->toks[3].text, 1);
+    }else if (strcmp(tok_list->toks[0].text, "alias") == 0) {
+        add_alias(alias_table, tok_list->toks[1].text, tok_list->toks[3].text);
     }
 
 }
@@ -155,26 +118,25 @@ void pen_chirp(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_
 
     (void)hist;
 
-    if (arg_count < 2) {
+    if (tok_list->n < 2) {
         return;
     }
 
-    char * var = *(tok_list->args + 1);
-    char * value = getenv(var);
+    char * value = getenv(tok_list->toks[1].text);
     if (value != NULL) {
         printf("(•ᴗ•)ゝ->%s\n", value);
     }else {
-        printf("(•ᴖ•)ゝ Penguin couldn't find %s\n", var);
+        printf("(•ᴖ•)ゝ Penguin couldn't find %s\n", tok_list->toks[1].text);
     }
 }
 
 void pen_unalias(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count) {
     (void) hist;
-    if (arg_count < 2) {
+    if (tok_list->n < 2) {
         return;
     }
 
-    char * alias = *(tok_list->args + 1);
+    char * alias = tok_list->toks[1].text;
     clear_alias(alias_table, alias);
 }
 

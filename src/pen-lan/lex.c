@@ -2,17 +2,19 @@
 #include "lan_structs.h"
 #include <stdlib.h>
 #include <string.h>
- 
+
 // counts the number of tokens in the input string, used to allocate memory for the token list.
 // NOTE: this is quote-unaware, so a quoted span containing spaces (e.g. "ls -l") is counted as
 // multiple tokens
 static size_t count_tokens(char * input, size_t n) {
     size_t count = 0;
- 
+
     size_t i = 0;
     while(i < n){
         if(input[i] == ' ' || input[i] == '\t' || input[i] == '\n'){
             count++;
+        } else if(input[i] == '='){
+            count += 2;  // upper bound: token before '=' + the '=' itself
         }
         i++;
     }
@@ -27,7 +29,7 @@ static void flush(char * input, pen_tok_list * tok_list, size_t input_start_tok_
     // tok_len is an upper bound: we may write fewer bytes once the quote markers are dropped.
     // Quotes group during splitting, then disappear here -- standard shell quote removal.
     tok->text = malloc(tok_len + 1);
- 
+
     char * out = tok->text;
     for (size_t i = 0; i < tok_len; i++) {
         char c = input[input_start_tok_idx + i];
@@ -35,12 +37,13 @@ static void flush(char * input, pen_tok_list * tok_list, size_t input_start_tok_
         *out++ = c;
     }
     *out = '\0';
- 
+
     //set the token type
     if      (strcmp(tok->text, "|")  == 0) tok->tok_type = PIPE;
     else if (strcmp(tok->text, ">")  == 0) tok->tok_type = REDIRECT_OUT;
     else if (strcmp(tok->text, "<")  == 0) tok->tok_type = REDIRECT_IN;
     else if (strcmp(tok->text, ">>") == 0) tok->tok_type = REDIRECT_APPEND;
+    else if (strcmp(tok->text, "=") == 0) tok->tok_type = EQ;
     else if (tok->text[0] == '$') tok->tok_type = ENV_VAR;
     else                                   tok->tok_type = WORD;
 }
@@ -70,7 +73,7 @@ pen_tok_list * tokenize(char * input, size_t n) {
  
     // second pass to actually tokenize the input string
     while(idx < n){
- 
+
  
         if((input[idx] == ' ' || input[idx] == '\t' || input[idx] == '\n') && !quote_flag){
  
@@ -90,7 +93,20 @@ pen_tok_list * tokenize(char * input, size_t n) {
         if(input[idx] == '"'){
             quote_flag = !quote_flag;
         }
- 
+
+        if(input[idx] == '=' && !quote_flag){
+            if(tok_len > 0){
+                flush(input, tok_list, input_start_tok_idx, tok_idx, tok_len);
+                tok_idx++;
+            }
+            flush(input, tok_list, idx, tok_idx, 1);
+            tok_idx++;
+            input_start_tok_idx = idx + 1;
+            tok_len = 0;
+            idx++;
+            continue;
+        }
+
         tok_len++;
         idx++;
     }

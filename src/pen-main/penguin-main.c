@@ -31,6 +31,8 @@
 #define BUILT_INS_COUNT (sizeof(pen_builtins) / sizeof(pen_builtin))
 #define PEN_BUILTIN_KEY(b) ((b)->command)
 
+static int pen_should_exit = 0;
+
 static struct option pen_options[] = {
     {"help", no_argument, NULL, 'h'}
 };
@@ -126,12 +128,14 @@ static void waddle(const pen_ast_node * command) {
 static int clean_up(history * hist, pen_alias_table * alias_table) {
     clean_history(hist);
     clear_alias_table(alias_table);
+    rl_clear_history();
+    rl_free_line_state();
     return 0;
 }
 
 //method that frees the resources taken by the tokens, such as the memory allocated for the tokens and the memory allocated for the token strings
-static void free_tokens(pen_tok_list * tok_list, size_t arg_count) {
-    for (int i = 0; i < arg_count; i++) {
+static void free_tokens(pen_tok_list * tok_list) {
+    for (int i = 0; i < tok_list->n; i++) {
         free(tok_list->toks[i].text);
     }
     free(tok_list->toks);
@@ -141,10 +145,9 @@ static void free_tokens(pen_tok_list * tok_list, size_t arg_count) {
 
 //method that implements the exit built in command, exits the shell and does some clean up before exiting
 void pen_exit(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, const size_t arg_count) {
-    clean_up(hist, alias_table);
-    free_tokens(tok_list, arg_count);
+    (void)tok_list; (void)hist; (void)alias_table; (void)arg_count;
+    pen_should_exit = 1;
     printf("\033[38;2;0;255;255m" "Goodbye (•ᴗ•)ゝ\n" "\033[0m");
-    exit(0);
 }
 
 //method that implements the pwd built in command, prints the current working directory to the user
@@ -353,7 +356,7 @@ static void process_line(char * cmmd, history * hist, pen_alias_table * alias_ta
 
     //blank line, just free the tokens and return
     if(tok_list->n == 0) {
-        free_tokens(tok_list, tok_list->n);
+        free_tokens(tok_list);
         return;
     }
 
@@ -367,17 +370,18 @@ static void process_line(char * cmmd, history * hist, pen_alias_table * alias_ta
     pen_ast_node * line = parse(expanded_tok_list_with_vars);
     if (line == NULL) {                     // "| ls", "ls |", or a token the grammar can't take yet
         fprintf(stderr, "penguin: syntax error\n");
-        free_tokens(expanded_tok_list, expanded_tok_list->n);
-        free_tokens(expanded_tok_list_with_vars, expanded_tok_list_with_vars->n);
+        free_tokens(tok_list);
+        free_tokens(expanded_tok_list);
+        free_tokens(expanded_tok_list_with_vars);
         return;
     }
 
     execute_line(line, expanded_tok_list_with_vars, hist, alias_table);
 
     free_ast(line);                         // frees the nodes (token text is borrowed, not freed here)
-    free_tokens(tok_list, tok_list->n);
-    free_tokens(expanded_tok_list, expanded_tok_list->n);     // frees the token text and the backing arrays
-    free_tokens(expanded_tok_list_with_vars, expanded_tok_list_with_vars->n);
+    free_tokens(tok_list);
+    free_tokens(expanded_tok_list);     // frees the token text and the backing arrays
+    free_tokens(expanded_tok_list_with_vars);
 }
 
 static char * build_prompt(char * prompt) {
@@ -421,7 +425,7 @@ int run(int argc, char ** argv) {
     char * cmmd;
     char prompt[MAX_PATH_LEN + 38];
 
-    while ((cmmd = readline(build_prompt(prompt))) != NULL) {
+    while (!pen_should_exit && (cmmd = readline(build_prompt(prompt))) != NULL) {
         process_line(cmmd, hist, alias_table);
         free(cmmd);
     }
