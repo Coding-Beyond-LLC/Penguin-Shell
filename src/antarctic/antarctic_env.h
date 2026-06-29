@@ -11,10 +11,9 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <fcntl.h>
-#include <errno.h>
 #include <pwd.h>
 #include <readline/history.h>
-#include "../pen-lan/lex.h"
+#include "../pen-lan/lan_structs.h"
 
 //common constants used by penguin go here
 #define MAX_CMMD_LEN 65536

@@ -2,11 +2,14 @@
 // Created by nate on 12/24/25.
 //
 
-#include "antarctic_env.h"
 #include <readline/history.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <errno.h>
+#include "antarctic_env.h"
+#include "../pen-lan/lex.h"
+
 
 pen_alias_table * init_alias_table() {
     pen_alias_table * alias_table = malloc(sizeof(pen_alias_table));
