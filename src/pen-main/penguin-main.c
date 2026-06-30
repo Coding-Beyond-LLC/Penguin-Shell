@@ -350,7 +350,7 @@ static void execute_line(pen_ast_node * line, pen_tok_list * tok_list, history *
     }
 }
 
-static void process_line(char * cmmd, history * hist, pen_alias_table * alias_table) {
+static void process_line(char * cmmd, history * hist, pen_alias_table * alias_table, int is_pen_rc) {
 
     pen_tok_list * tok_list = tokenize(cmmd, strlen(cmmd));
 
@@ -365,7 +365,7 @@ static void process_line(char * cmmd, history * hist, pen_alias_table * alias_ta
 
     //record every non-empty line, the way a shell keeps everything you typed
     //we record the original input pre variable resolution
-    record_history(hist, cmmd, expanded_tok_list, expanded_tok_list->n);
+    if(is_pen_rc != 1) record_history(hist, cmmd, expanded_tok_list, expanded_tok_list->n);
 
     pen_ast_node * line = parse(expanded_tok_list_with_vars);
     if (line == NULL) {                     // "| ls", "ls |", or a token the grammar can't take yet
@@ -382,6 +382,52 @@ static void process_line(char * cmmd, history * hist, pen_alias_table * alias_ta
     free_tokens(tok_list);
     free_tokens(expanded_tok_list);     // frees the token text and the backing arrays
     free_tokens(expanded_tok_list_with_vars);
+}
+
+static void process_rc(history * hist, pen_alias_table * alias_table){
+
+    const char * home = getenv("HOME");
+    if (home == NULL) {
+        struct passwd *pwd = getpwuid(getuid());
+        if (pwd != NULL) home = pwd->pw_dir;
+    }
+
+    if (home != NULL) {
+
+        char * pen_rc_file_name = malloc(strlen(home) + 7);
+        strcpy(pen_rc_file_name, home);
+        strcat(pen_rc_file_name, "/.penrc");
+
+        int fd = open(pen_rc_file_name, O_RDWR, 0777);
+
+        if(fd != -1){
+
+            FILE * stream = fdopen(fd, "r");
+
+            if(stream == NULL){
+                printf("failed to read line from .penrc :(\n");
+            }else{
+
+                char * line = NULL;
+                size_t len = 0;
+
+                while(getline(&line, &len, stream) != -1){
+
+                    line[strcspn(line, "\n")] = '\0';
+
+                    process_line(line, hist, alias_table, 1);
+                }
+
+                free(line);
+                fclose(stream);
+            }
+        }
+
+        close(fd);
+        free(pen_rc_file_name);
+
+    }
+
 }
 
 static char * build_prompt(char * prompt) {
@@ -413,20 +459,22 @@ static char * build_prompt(char * prompt) {
 //main method that runs the shell, handles the main REPL loop and calls the appropriate methods to execute the commands entered by the user
 int run(int argc, char ** argv) {
 
-    parse_options(argc, argv);
-
-    greet();
-
     //initialize the history and alias table
     history * hist = init_history();
     pen_alias_table * alias_table = init_alias_table();
+
+    parse_options(argc, argv);
+
+    process_rc(hist, alias_table);
+
+    greet();
 
     //main REPL loop
     char * cmmd;
     char prompt[MAX_PATH_LEN + 38];
 
     while (!pen_should_exit && (cmmd = readline(build_prompt(prompt))) != NULL) {
-        process_line(cmmd, hist, alias_table);
+        process_line(cmmd, hist, alias_table, 0);
         free(cmmd);
     }
 

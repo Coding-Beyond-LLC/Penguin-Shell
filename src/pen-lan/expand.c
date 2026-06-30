@@ -65,6 +65,50 @@ pen_tok_list * expand_aliases(pen_tok_list * tok_list, pen_alias_table * alias_t
     return out;
 }
 
+// Expand all $VAR references in `str`, returning a newly malloc'd string.
+// Unset variables expand to empty string (standard shell behaviour).
+static char * expand_vars_in_str(const char * str) {
+    size_t out_cap = 256;
+    size_t out_len = 0;
+    char * out = malloc(out_cap);
+
+    const char * p = str;
+    while (*p) {
+        if (*p == '$' && *(p + 1) == '{') {
+            const char * name_start = p + 2;
+            size_t name_len = 0;
+            while (name_start[name_len] && name_start[name_len] != '}')
+                name_len++;
+
+            char * name = malloc(name_len + 1);
+            memcpy(name, name_start, name_len);
+            name[name_len] = '\0';
+            const char * val = getenv(name);
+            free(name);
+
+            if (val) {
+                size_t val_len = strlen(val);
+                while (out_len + val_len + 1 > out_cap) {
+                    out_cap *= 2;
+                    out = realloc(out, out_cap);
+                }
+                memcpy(out + out_len, val, val_len);
+                out_len += val_len;
+            }
+            p = name_start + name_len;
+            if (*p == '}') p++;
+        } else {
+            if (out_len + 2 > out_cap) {
+                out_cap *= 2;
+                out = realloc(out, out_cap);
+            }
+            out[out_len++] = *p++;
+        }
+    }
+    out[out_len] = '\0';
+    return out;
+}
+
 pen_tok_list * expand_env_vars(pen_tok_list * tok_list){
 
     pen_tok_list * out = malloc(sizeof(pen_tok_list));
@@ -74,22 +118,12 @@ pen_tok_list * expand_env_vars(pen_tok_list * tok_list){
     size_t cap = 0;
 
     for(size_t i = 0; i < tok_list->n; i++){
+        const char * text = tok_list->toks[i].text;
 
-        char * env_var_value = NULL;
-
-        if(tok_list->toks[i].tok_type == ENV_VAR){
-            size_t env_var_name_len = strlen(tok_list->toks[i].text) - 1;
-            char * env_var_name = malloc(env_var_name_len + 1);
-            memcpy(env_var_name, tok_list->toks[i].text + 1, env_var_name_len);
-            env_var_name[env_var_name_len] = '\0';
-            env_var_value = getenv(env_var_name);
-            free(env_var_name);
-        }
-
-        if(env_var_value != NULL){
-            push_tok(out, &cap, dup_str(env_var_value), WORD);
-        }else{
-            push_tok(out, &cap, dup_str(tok_list->toks[i].text), tok_list->toks[i].tok_type);
+        if (strchr(text, '$') != NULL) {
+            push_tok(out, &cap, expand_vars_in_str(text), WORD);
+        } else {
+            push_tok(out, &cap, dup_str(text), tok_list->toks[i].tok_type);
         }
     }
 
