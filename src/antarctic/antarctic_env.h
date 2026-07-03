@@ -27,6 +27,9 @@
 #define INITIAL_ALIAS_LIM 32
 #define ALIAS_ARG_LIM 16
 
+extern int persist_hist_off_flag;
+extern int debug_mode_flag;
+
 typedef struct {
     char * full_cmmd;
     char * command;

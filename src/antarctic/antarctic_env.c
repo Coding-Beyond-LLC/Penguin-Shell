@@ -10,6 +10,8 @@
 #include "antarctic_env.h"
 #include "../pen-lan/lex.h"
 
+int persist_hist_off_flag = 1;
+int debug_mode_flag = 1;
 
 pen_alias_table * init_alias_table() {
     pen_alias_table * alias_table = malloc(sizeof(pen_alias_table));
@@ -235,6 +237,10 @@ history_entry * init_entry(size_t command_len, size_t arg_count) {
 
 static void persist_history(history * hist){
 
+    if(persist_hist_off_flag == 1){
+        return;
+    }
+
     const char * home = getenv("HOME");
     if (home == NULL) {
         struct passwd *pwd = getpwuid(getuid());
@@ -257,9 +263,20 @@ static void persist_history(history * hist){
             }
 
             if(fd != -1){
-                for(size_t i = 0; i < hist->cells_filled; i++){
-                    write(fd, hist->entries[i]->full_cmmd, strlen(hist->entries[i]->full_cmmd));
-                    write(fd, "\n", 1);
+                //store oldest section of history
+                for(size_t i = hist->next_empty; i < hist->cells_filled; i++){
+                    if(hist->entries[i]->full_cmmd != NULL) {
+                        write(fd, hist->entries[i]->full_cmmd, strlen(hist->entries[i]->full_cmmd));
+                        write(fd, "\n", 1);
+                    }
+                }
+
+                //store newer section of history
+                for(size_t i = 0; i < hist->next_empty; i++){
+                    if(hist->entries[i]->full_cmmd != NULL){
+                        write(fd, hist->entries[i]->full_cmmd, strlen(hist->entries[i]->full_cmmd));
+                        write(fd, "\n", 1);
+                    }
                 }
             }
 
@@ -339,7 +356,12 @@ int add_to_history(history * hist, char * full_cmmd, char * command, char ** arg
 
 void pen_print_history(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count) {
     (void)arg_count;
-    for (int i = 0; i < hist->cells_filled; i++) {
-        printf("%s\n", (*(hist->entries + i))->full_cmmd);
+
+    for (int i = hist->next_empty; i < hist->cells_filled; i++) {
+        printf("%s\n", hist->entries[i]->full_cmmd);
+    }
+
+    for (int i = 0; i < hist->next_empty; i++) {
+        printf("%s\n", hist->entries[i]->full_cmmd);
     }
 }

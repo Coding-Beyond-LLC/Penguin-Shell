@@ -4,11 +4,13 @@
 //Main REPL loop for the penguin shell
 #include "penguin-main.h"
 #include "../pen-util/pen-util.h"
+#include <bits/getopt_ext.h>
 #include <readline/history.h>
 
 #define USAGE   \
     "The penguin shell (•ᴗ•)ゝ\n" \
     "Run the shell by calling the penguin executable, be sure to set penguin in your path to call from any dir. \n" \
+    "options: -h (print help), -x (turn off writing of history to disk), -d (turn on debug mode). \n" \
     "basic commands:\n" \
     "  alias [alias name]=[alias value]      Creates an alias with the specified name.\n" \
     "  cd [path]                             Change directory to path (use * for home directory).\n" \
@@ -34,7 +36,9 @@
 static int pen_should_exit = 0;
 
 static struct option pen_options[] = {
-    {"help", no_argument, NULL, 'h'}
+    {"help", no_argument, NULL, 'h'},
+    {"no-disk-hist", no_argument, &persist_hist_off_flag, 'x'},
+    {"debug-mode", no_argument, &debug_mode_flag, 'd'}
 };
 
 typedef struct {
@@ -124,14 +128,6 @@ static void waddle(const pen_ast_node * command) {
     free(argv);
 }
 
-//method that handles cleaning up the resources taken by the shell before exiting, such as the history and alias table
-static int clean_up(history * hist, pen_alias_table * alias_table) {
-    clean_history(hist);
-    clear_alias_table(alias_table);
-    rl_clear_history();
-    rl_free_line_state();
-    return 0;
-}
 
 //method that frees the resources taken by the tokens, such as the memory allocated for the tokens and the memory allocated for the token strings
 static void free_tokens(pen_tok_list * tok_list) {
@@ -188,22 +184,6 @@ void pen_help(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_t
 //END SECTION: Helper functions for main shell loop commands
 
 //SECTION: Main shell loop commands
-//method that parses the options for the shell itself, such as the help flag, if the user enters -h or --help then it will print the usage message and exit
-static void parse_options(const int argc, char ** argv) {
-    int option_char = 0;
-    while (((option_char) = getopt_long(argc, argv, "h::", pen_options, NULL)) != -1) {
-        switch (option_char) {
-            case 'h':
-                fprintf(stdout, "%s", USAGE);
-                exit(0);
-                break;
-            default:
-                fprintf(stdout, "%s", USAGE);
-                exit(1);
-        }
-    }
-}
-
 //method that prints the welcome message when the shell is first run
 static void greet() {
     printf("===========================\n");
@@ -369,7 +349,7 @@ static void process_line(char * cmmd, history * hist, pen_alias_table * alias_ta
 
     pen_ast_node * line = parse(expanded_tok_list_with_vars);
     if (line == NULL) {                     // "| ls", "ls |", or a token the grammar can't take yet
-        fprintf(stderr, "penguin: syntax error\n");
+        if(debug_mode_flag) fprintf(stderr, "penguin: syntax error\n");
         free_tokens(tok_list);
         free_tokens(expanded_tok_list);
         free_tokens(expanded_tok_list_with_vars);
@@ -404,7 +384,7 @@ static void process_rc(history * hist, pen_alias_table * alias_table){
 
             FILE * stream = fdopen(fd, "r");
 
-            if(stream == NULL){
+            if(stream == NULL && debug_mode_flag){
                 printf("failed to read line from .penrc :(\n");
             }else{
 
@@ -453,17 +433,36 @@ static char * build_prompt(char * prompt) {
     return prompt;
 }
 
+//method that parses the options for the shell itself, such as the help flag, if the user enters -h or --help then it will print the usage message and exit
+static void parse_options(const int argc, char ** argv, history * hist, pen_alias_table * alias_table) {
+    int option_char = 0;
+    while (((option_char) = getopt_long(argc, argv, "h::x::d::", pen_options, NULL)) != -1) {
+        switch (option_char) {
+            case 'h':
+                fprintf(stdout, "%s", USAGE);
+                exit(0);
+                break;
+            case 'x':
+                break;
+            case 'd':
+                process_line("alias lla=\"ls -la\"", hist, alias_table, 0);
+                process_line("alias ll=\"ls -ll\"", hist, alias_table, 0);
+                process_line("xpt PEN_HOME=${HOME}/Penguin-Shell", hist, alias_table, 0);
+                break;
+            default:
+                fprintf(stdout, "%s", USAGE);
+                exit(1);
+        }
+    }
+}
+
 //END SECTION: Main shell loop commands
 
 //SECTION: Main method
 //main method that runs the shell, handles the main REPL loop and calls the appropriate methods to execute the commands entered by the user
-int run(int argc, char ** argv) {
+int run(int argc, char ** argv, history * hist, pen_alias_table * alias_table) {
 
-    //initialize the history and alias table
-    history * hist = init_history();
-    pen_alias_table * alias_table = init_alias_table();
-
-    parse_options(argc, argv);
+    parse_options(argc, argv, hist, alias_table);
 
     process_rc(hist, alias_table);
 
@@ -478,7 +477,6 @@ int run(int argc, char ** argv) {
         free(cmmd);
     }
 
-    clean_up(hist, alias_table);
     return 0;
 }
 //END SECTION: Main method
