@@ -120,7 +120,8 @@ pen_tok_list * expand_env_vars(pen_tok_list * tok_list){
     for(size_t i = 0; i < tok_list->n; i++){
         const char * text = tok_list->toks[i].text;
 
-        if (strchr(text, '$') != NULL) {
+        const char * var_start = strstr(text, "${");
+        if (var_start != NULL && strchr(var_start, '}') != NULL) {
             push_tok(out, &cap, expand_vars_in_str(text), WORD);
         } else {
             push_tok(out, &cap, dup_str(text), tok_list->toks[i].tok_type);
