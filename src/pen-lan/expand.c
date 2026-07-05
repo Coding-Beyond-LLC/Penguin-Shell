@@ -10,7 +10,7 @@ static char * dup_str(const char * s) {
     memcpy(p, s, len + 1);
     return p;
 }
- 
+
 // append one finished token (owned text + type) to a growing tok_list, doubling capacity as needed
 static void push_tok(pen_tok_list * out, size_t * cap, char * text, pen_tok_type type) {
     if (out->n == *cap) {
@@ -35,14 +35,14 @@ pen_tok_list * expand_aliases(pen_tok_list * tok_list, pen_alias_table * alias_t
     int is_unalias = tok_list->n > 0 && strcmp(tok_list->toks[0].text, "unalias") == 0;
  
     for (size_t i = 0; i < tok_list->n; i++) {
-        char * alias = (is_unalias && i > 0)
-                           ? NULL
+        int existing_idx = (is_unalias && i > 0)
+                           ? -1
                            : alias_lookup(alias_table, tok_list->toks[i].text);
- 
-        if (alias != NULL) {
+
+        if (existing_idx != -1) {
             // re-lex just the alias value; its tokens (and their types) splice straight in,
             // so an alias whose value contains operators (e.g. "git push | tee log") works.
-            pen_tok_list * sub = tokenize(alias, strlen(alias));
+            pen_tok_list * sub = tokenize(alias_table->aliases[existing_idx].alias_value, strlen(alias_table->aliases[existing_idx].alias_value));
             for (size_t j = 0; j < sub->n; j++) {
                 push_tok(out, &cap, sub->toks[j].text, sub->toks[j].tok_type); // take ownership of text
             }

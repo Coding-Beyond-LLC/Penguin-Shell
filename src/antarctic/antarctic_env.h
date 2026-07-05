@@ -59,7 +59,6 @@ typedef struct {
 
 //environment manipulation library
 void pen_export(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, const size_t arg_count);
-void pen_chirp(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, const size_t arg_count);
 void pen_unalias(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, const size_t arg_count);
 
 void print_antarctic_vars();
@@ -80,7 +79,7 @@ void clean_history(history * hist);
 pen_alias_table * init_alias_table();
 
 //looks up existing aliases
-char * alias_lookup(pen_alias_table * alias_table, char * alias);
+int alias_lookup(pen_alias_table * alias_table, char * alias);
 
 void add_alias(pen_alias_table * alias_table, char * alias, char * value);
 

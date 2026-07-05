@@ -6,6 +6,7 @@
 #include "../pen-util/pen-util.h"
 #include <bits/getopt_ext.h>
 #include <readline/history.h>
+#include <string.h>
 
 #define USAGE   \
     "The penguin shell (•ᴗ•)ゝ\n" \
@@ -14,8 +15,7 @@
     "basic commands:\n" \
     "  alias [alias name]=[alias value]      Creates an alias with the specified name.\n" \
     "  cd [path]                             Change directory to path (use * for home directory).\n" \
-    "  chirp [environment variable]          Outputs out the value of the specified environment variable.\n" \
-    "  exit                                  Closes the shell.\n"\
+    "  exit/quit                             Closes the shell.\n"\
     "  history                               Outputs command history throughout the shell's runtime up to a max of 128 commands (latest commands).\n" \
     "  pwd                                   Outputs the current working directory.\n" \
     "  unalias [alias name]                  Deletes the specified alias.\n" \
@@ -23,7 +23,6 @@
 
 #define ALIAS_USG "alias [alias name]=[alias value], Creates an alias with the specified name.\n"
 #define CD_USG "cd [path], Change directory to path (use * for home directory).\n"
-#define CHRP_USG "chirp [environment variable], Outputs out the value of the specified environment variable.\n"
 #define EXIT_USG "exit, Closes the shell.\n"
 #define HIST_USG "history, Outputs command history throughout the shell's runtime up to a max of 128 commands (latest commands).\n"
 #define PWD_USG "pwd, Outputs the current working directory.\n"
@@ -37,8 +36,9 @@ static int pen_should_exit = 0;
 
 static struct option pen_options[] = {
     {"help", no_argument, NULL, 'h'},
-    {"no-disk-hist", no_argument, &persist_hist_off_flag, 'x'},
-    {"debug-mode", no_argument, &debug_mode_flag, 'd'}
+    {"no-disk-hist", no_argument, NULL, 'x'},
+    {"debug-mode", no_argument, NULL, 'd'},
+    {0, 0, 0, 0}
 };
 
 typedef struct {
@@ -50,10 +50,10 @@ typedef struct {
 static pen_builtin pen_builtins[] = {
     {"alias", pen_export, ALIAS_USG},
     {"cd", pen_cd, CD_USG},
-    { "chirp", pen_chirp, CHRP_USG},
     {"exit", pen_exit, EXIT_USG},
     {"help", pen_help, USAGE},
     { "history", pen_print_history, HIST_USG},
+    {"quit", pen_exit, EXIT_USG},
     { "pwd", pen_pwd, PWD_USG},
     {"unalias", pen_unalias, UNALIAS_USG},
     { "xpt", pen_export, XPT_USG}
@@ -105,7 +105,7 @@ static void apply_redirects(const pen_ast_node * redirect_list) {
 }
 
 //method that handles execution of the commands, if the command is not found then it will print an error message
-static void waddle(const pen_ast_node * command) {
+static void waddle(const pen_ast_node * command, int wait_flag) {
 
     char ** argv = flatten_command(command);
     pid_t pid = fork();
@@ -124,7 +124,7 @@ static void waddle(const pen_ast_node * command) {
     }
 
     int child_status;
-    wait(&child_status);
+    if(wait_flag) wait(&child_status);
     free(argv);
 }
 
@@ -207,7 +207,11 @@ static void dispatch_command(const pen_ast_node * command, pen_tok_list * tok_li
     pen_builtin * builtin = pen_lookup(tok_list);
 
     if(builtin == NULL) {
-        waddle(command);
+        if(strcmp(tok_list->toks[tok_list->n - 1].text, "&") == 0){
+            waddle(command, 0);
+        }else{
+            waddle(command, 1);
+        }
         return;
     }
 
@@ -245,6 +249,15 @@ static char ** flatten_command(const pen_ast_node * command) {
     const pen_ast_node * exec_node = command->nodes_children[0];
     const pen_ast_node * arg_list  = command->nodes_children[1];
     size_t argc = 1 + count_args(arg_list);
+
+    // A trailing lone "&" marks a background job for dispatch_command and
+    // must not be forwarded to the exec'd program as an argument.
+    const pen_ast_node * last_arg = NULL;
+    for (const pen_ast_node * cur = arg_list; cur->child_count > 0; cur = cur->nodes_children[1]) {
+        last_arg = cur->nodes_children[0];
+    }
+    if (last_arg && strcmp(last_arg->tok->text, "&") == 0) argc--;
+
     char ** argv = malloc(sizeof(char *) * (argc + 1));
     argv[0] = exec_node->tok->text;
     const pen_ast_node * cur = arg_list;
@@ -340,12 +353,14 @@ static void process_line(char * cmmd, history * hist, pen_alias_table * alias_ta
         return;
     }
 
-    pen_tok_list * expanded_tok_list = expand_aliases(tok_list, alias_table);
-    pen_tok_list * expanded_tok_list_with_vars = expand_env_vars(expanded_tok_list);
+    pen_tok_list * expanded_tok_list = NULL;
+
+    if(strcmp(tok_list->toks[0].text, "alias") != 0) expanded_tok_list = expand_aliases(tok_list, alias_table);
+    pen_tok_list * expanded_tok_list_with_vars = expanded_tok_list == NULL ? expand_env_vars(tok_list) : expand_env_vars(expanded_tok_list);
 
     //record every non-empty line, the way a shell keeps everything you typed
     //we record the original input pre variable resolution
-    if(is_pen_rc != 1) record_history(hist, cmmd, expanded_tok_list, expanded_tok_list->n);
+    if(is_pen_rc != 1) record_history(hist, cmmd, tok_list, tok_list->n);
 
     pen_ast_node * line = parse(expanded_tok_list_with_vars);
     if (line == NULL) {                     // "| ls", "ls |", or a token the grammar can't take yet
@@ -360,7 +375,7 @@ static void process_line(char * cmmd, history * hist, pen_alias_table * alias_ta
 
     free_ast(line);                         // frees the nodes (token text is borrowed, not freed here)
     free_tokens(tok_list);
-    free_tokens(expanded_tok_list);     // frees the token text and the backing arrays
+    if(expanded_tok_list != NULL) free_tokens(expanded_tok_list);     // frees the token text and the backing arrays
     free_tokens(expanded_tok_list_with_vars);
 }
 
@@ -436,18 +451,21 @@ static char * build_prompt(char * prompt) {
 //method that parses the options for the shell itself, such as the help flag, if the user enters -h or --help then it will print the usage message and exit
 static void parse_options(const int argc, char ** argv, history * hist, pen_alias_table * alias_table) {
     int option_char = 0;
-    while (((option_char) = getopt_long(argc, argv, "h::x::d::", pen_options, NULL)) != -1) {
+    int opt_idx = 0;
+    while (((option_char) = getopt_long(argc, argv, "h::x::d::", pen_options, &opt_idx)) != -1) {
         switch (option_char) {
             case 'h':
                 fprintf(stdout, "%s", USAGE);
                 exit(0);
                 break;
             case 'x':
+                persist_hist_off_flag = 1;
                 break;
             case 'd':
-                process_line("alias lla=\"ls -la\"", hist, alias_table, 0);
-                process_line("alias ll=\"ls -ll\"", hist, alias_table, 0);
-                process_line("xpt PEN_HOME=${HOME}/Penguin-Shell", hist, alias_table, 0);
+                debug_mode_flag = 1;
+                process_line("alias lla=\"ls -la\"", hist, alias_table, 1);
+                process_line("alias ll=\"ls -ll\"", hist, alias_table, 1);
+                process_line("xpt PEN_HOME=${HOME}/Penguin-Shell", hist, alias_table, 1);
                 break;
             default:
                 fprintf(stdout, "%s", USAGE);

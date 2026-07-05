@@ -10,8 +10,8 @@
 #include "antarctic_env.h"
 #include "../pen-lan/lex.h"
 
-int persist_hist_off_flag = 1;
-int debug_mode_flag = 1;
+int persist_hist_off_flag = 0;
+int debug_mode_flag = 0;
 
 pen_alias_table * init_alias_table() {
     pen_alias_table * alias_table = malloc(sizeof(pen_alias_table));
@@ -30,7 +30,9 @@ pen_alias_table * init_alias_table() {
 
 void add_alias(pen_alias_table * alias_table, char * alias, char * value) {
 
-    if (alias_table->aliases[alias_table->next_free_index].free == 1) {
+    int existing_idx = alias_lookup(alias_table, alias);
+
+    if (alias_table->aliases[alias_table->next_free_index].free == 1 && existing_idx == -1) {
 
         alias_table->aliases[alias_table->next_free_index].alias_name = malloc(sizeof(char) * (strlen(alias) + 1));
         memcpy(alias_table->aliases[alias_table->next_free_index].alias_name, alias, strlen(alias) + 1);
@@ -40,8 +42,11 @@ void add_alias(pen_alias_table * alias_table, char * alias, char * value) {
 
         alias_table->aliases[alias_table->next_free_index].free = 0;
         update_next_free_index(alias_table, alias_table->next_free_index);
-    }else {
-        //TODO throw error here, halt the shell
+
+    }else if(existing_idx != -1){
+        free(alias_table->aliases[existing_idx].alias_value);
+        alias_table->aliases[existing_idx].alias_value = malloc(sizeof(char) * (strlen(value) + 1));
+        memcpy(alias_table->aliases[existing_idx].alias_value, value, sizeof(char) * (strlen(value) + 1));
     }
 
 }
@@ -62,13 +67,13 @@ void update_next_free_index(pen_alias_table * alias_table, int last_free_index) 
 
 }
 
-char * alias_lookup(pen_alias_table * alias_table, char * alias) {
+int alias_lookup(pen_alias_table * alias_table, char * alias) {
     for (int i = 0; i < alias_table->table_limit; i++) {
         if (alias_table->aliases[i].alias_name != NULL && strcmp(alias_table->aliases[i].alias_name, alias) == 0) {
-            return alias_table->aliases[i].alias_value;
+            return i;
         }
     }
-    return NULL;
+    return -1;
 }
 
 void clear_alias(pen_alias_table * alias_table, char * alias) {
@@ -114,22 +119,6 @@ void pen_export(pen_tok_list * tok_list, history * hist, pen_alias_table * alias
         add_alias(alias_table, tok_list->toks[1].text, tok_list->toks[3].text);
     }
 
-}
-
-void pen_chirp(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count) {
-
-    (void)hist;
-
-    if (tok_list->n < 2) {
-        return;
-    }
-
-    char * value = getenv(tok_list->toks[1].text);
-    if (value != NULL) {
-        printf("(•ᴗ•)ゝ->%s\n", value);
-    }else {
-        printf("(•ᴖ•)ゝ Penguin couldn't find %s\n", tok_list->toks[1].text);
-    }
 }
 
 void pen_unalias(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count) {
