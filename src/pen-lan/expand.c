@@ -65,9 +65,11 @@ pen_tok_list * expand_aliases(pen_tok_list * tok_list, pen_alias_table * alias_t
     return out;
 }
 
-// Expand all $VAR references in `str`, returning a newly malloc'd string.
+// Expand all ${VAR} references in `str`, returning a newly malloc'd string.
 // Unset variables expand to empty string (standard shell behaviour).
-static char * expand_vars_in_str(const char * str) {
+// ${?} is the one special case: it's shell state (last exit status), not an
+// environment variable, so it's substituted directly instead of via getenv.
+static char * expand_vars_in_str(const char * str, int last_status) {
     size_t out_cap = 256;
     size_t out_len = 0;
     char * out = malloc(out_cap);
@@ -83,7 +85,14 @@ static char * expand_vars_in_str(const char * str) {
             char * name = malloc(name_len + 1);
             memcpy(name, name_start, name_len);
             name[name_len] = '\0';
-            const char * val = getenv(name);
+            char status_buf[12];
+            const char * val;
+            if (strcmp(name, "?") == 0) {
+                snprintf(status_buf, sizeof(status_buf), "%d", last_status);
+                val = status_buf;
+            } else {
+                val = getenv(name);
+            }
             free(name);
 
             if (val) {
@@ -109,7 +118,24 @@ static char * expand_vars_in_str(const char * str) {
     return out;
 }
 
-pen_tok_list * expand_env_vars(pen_tok_list * tok_list){
+// true for a token whose *text alone* (an exact "$?", or anything containing
+// a "${...}" reference) the grammar should accept as a WORD -- independent
+// of what value it will substitute to, which isn't decided until execution
+static int is_var_reference(const char * text) {
+    if (strcmp(text, "$?") == 0) return 1;
+    const char * brace = strstr(text, "${");
+    return brace != NULL && strchr(brace, '}') != NULL;
+}
+
+// Structural pass, run once before parsing: retypes ENV_VAR tokens that the
+// grammar should accept as a WORD -- exact "$?" and anything containing a
+// "${...}" reference -- without substituting a value yet. Substitution
+// happens later, per-command, right before that command executes (see
+// expand_word_text), so $?/${?} reflect the freshest exit status even for a
+// later command on the same line ("false; echo ${?}"). A bare $FOO with no
+// braces is left as ENV_VAR and so still fails to parse -- this shell
+// requires braces around variable references, by design.
+pen_tok_list * normalize_env_var_tokens(pen_tok_list * tok_list) {
 
     pen_tok_list * out = malloc(sizeof(pen_tok_list));
     out->toks = NULL;
@@ -117,15 +143,13 @@ pen_tok_list * expand_env_vars(pen_tok_list * tok_list){
     out->n = 0;
     size_t cap = 0;
 
-    for(size_t i = 0; i < tok_list->n; i++){
+    for (size_t i = 0; i < tok_list->n; i++) {
         const char * text = tok_list->toks[i].text;
+        pen_tok_type type = tok_list->toks[i].tok_type;
 
-        const char * var_start = strstr(text, "${");
-        if (var_start != NULL && strchr(var_start, '}') != NULL) {
-            push_tok(out, &cap, expand_vars_in_str(text), WORD);
-        } else {
-            push_tok(out, &cap, dup_str(text), tok_list->toks[i].tok_type);
-        }
+        if (type == ENV_VAR && is_var_reference(text)) type = WORD;
+
+        push_tok(out, &cap, dup_str(text), type);
     }
 
     // build the NULL-terminated args view execvp wants, borrowing the token strings
@@ -136,4 +160,22 @@ pen_tok_list * expand_env_vars(pen_tok_list * tok_list){
     out->args[out->n] = NULL;
 
     return out;
+}
+
+// Substitutes ${VAR}/${?} references (and the bare "$?" spelling) in a
+// single token's text, using last_status for $?/${?}. Called per-command at
+// execution time -- not once for the whole line -- so a later command on
+// the same line sees an earlier one's exit status. Always returns a freshly
+// malloc'd string, even when there was nothing to substitute.
+char * expand_word_text(const char * text, int last_status) {
+    if (strcmp(text, "$?") == 0) {
+        char buf[12];
+        snprintf(buf, sizeof(buf), "%d", last_status);
+        return dup_str(buf);
+    }
+    const char * var_start = strstr(text, "${");
+    if (var_start != NULL && strchr(var_start, '}') != NULL) {
+        return expand_vars_in_str(text, last_status);
+    }
+    return dup_str(text);
 }

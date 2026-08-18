@@ -12,15 +12,86 @@ typedef struct {
 } pen_operator;
 
 static const pen_operator OPERATORS[] = {
-    { ">>", REDIRECT_APPEND },
-    { "&&", AND_IF },
-    { "|",  PIPE },
-    { "<",  REDIRECT_IN },
-    { ">",  REDIRECT_OUT },
-    { ";",  SEMI },
-    { "=",  EQ },
+    { "<<-", DLESSDASH },
+    { ">>",  REDIRECT_APPEND },
+    { "<<",  DLESS },
+    { "&&",  AND_IF },
+    { "||",  OR_IF },
+    { ";;",  DSEMI },
+    { "<&",  LESSAND },
+    { ">&",  GREATAND },
+    { "<>",  LESSGREAT },
+    { ">|",  CLOBBER },
+    { "|",   PIPE },
+    { "<",   REDIRECT_IN },
+    { ">",   REDIRECT_OUT },
+    { ";",   SEMI },
+    { "&",   AMP },
+    { "=",   EQ },
 };
 #define NUM_OPERATORS (sizeof(OPERATORS) / sizeof(OPERATORS[0]))
+
+// Reserved words (POSIX XCU 2.4). '!' has no operator-table entry above --
+// unlike '&' or ';' it isn't punctuation, so the word scanner just reads it
+// like any other character and it arrives here as an ordinary WORD "!".
+typedef struct {
+    const char * text;
+    pen_tok_type type;
+} pen_reserved_word;
+
+static const pen_reserved_word RESERVED_WORDS[] = {
+    { "!",     BANG   },
+    { "{",     LBRACE },
+    { "}",     RBRACE },
+    { "case",  CASE   },
+    { "do",    DO     },
+    { "done",  DONE   },
+    { "elif",  ELIF   },
+    { "else",  ELSE   },
+    { "esac",  ESAC   },
+    { "fi",    FI     },
+    { "for",   FOR    },
+    { "if",    IF     },
+    { "in",    IN     },
+    { "then",  THEN   },
+    { "until", UNTIL  },
+    { "while", WHILE  },
+};
+#define NUM_RESERVED_WORDS (sizeof(RESERVED_WORDS) / sizeof(RESERVED_WORDS[0]))
+
+// true if a token of this type is one after which the grammar expects the
+// start of a new command (i.e. reserved-word recognition applies to the
+// token that follows) -- separator_op/AND_IF/OR_IF/PIPE begin a new
+// and_or/pipeline/command, and Bang precedes the pipe_sequence it negates
+static int starts_command_position(pen_tok_type t) {
+    switch (t) {
+        case SEMI: case AMP: case AND_IF: case OR_IF: case PIPE: case BANG:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+// Shell Grammar Rules, rule 1: a WORD is recognized as a reserved word only
+// where a reserved word could be the next correct token. We approximate
+// that "command name" position as the first token of the line or the token
+// right after an operator that starts a new command; a reserved word's text
+// appearing anywhere else (e.g. as a plain argument) stays a WORD.
+static void reclassify_reserved_words(pen_tok_list * tok_list) {
+    int command_position = 1;
+    for (size_t i = 0; i < tok_list->n; i++) {
+        pen_tok * tok = &tok_list->toks[i];
+        if (command_position && tok->tok_type == WORD) {
+            for (size_t j = 0; j < NUM_RESERVED_WORDS; j++) {
+                if (strcmp(tok->text, RESERVED_WORDS[j].text) == 0) {
+                    tok->tok_type = RESERVED_WORDS[j].type;
+                    break;
+                }
+            }
+        }
+        command_position = starts_command_position(tok->tok_type);
+    }
+}
 
 // true if c could be the first character of some operator (a prefix match,
 // not necessarily a complete one -- e.g. '&' alone, pending a second '&')
@@ -245,6 +316,7 @@ pen_tok_list * tokenize(char * input, size_t n) {
         tok->tok_type = (type == WORD && text[0] == '$') ? ENV_VAR : type;
     }
 
+    reclassify_reserved_words(tok_list);
     set_args(tok_list);
 
     return tok_list;

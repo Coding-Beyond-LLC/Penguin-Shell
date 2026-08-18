@@ -33,6 +33,8 @@ static pen_ast_node * new_node(node_type type) {
     node->nodes_children = NULL;
     node->child_count = 0;
     node->node_type = type;
+    node->tok_start = 0;
+    node->tok_end = 0;
     return node;
 }
 
@@ -43,6 +45,14 @@ static void alloc_children(pen_ast_node * node, size_t count) {
 }
 
 // ---- grammar productions ------------------------------------------------
+// This is the "lists / and_or / pipeline / simple_command" slice of the
+// POSIX Shell Grammar (XCU 2.10.2): reserved words are lexed and a leading
+// Bang negates a pipeline, but compound commands (if/for/while/until/case,
+// subshells, brace groups, function definitions) are not yet implemented --
+// a reserved word token appearing where a WORD is expected is a syntax
+// error (generate_exec_node's check(p, WORD) fails), same as any other
+// token the grammar can't consume.
+//
 // forward declarations: the productions are mutually recursive
 static pen_ast_node * generate_exec_node(parser * p);
 static pen_ast_node * generate_arg_node(parser * p);
@@ -50,8 +60,13 @@ static pen_ast_node * generate_arg_list_node(parser * p);
 static pen_ast_node * generate_redirect_node(parser * p);
 static pen_ast_node * generate_redirect_list_node(parser * p);
 static pen_ast_node * generate_command_node(parser * p);
-static pen_ast_node * generate_pipeline_tail_node(parser * p);
+static pen_ast_node * generate_pipe_tail_node(parser * p);
+static pen_ast_node * generate_pipe_sequence_node(parser * p);
 static pen_ast_node * generate_pipeline_node(parser * p);
+static pen_ast_node * generate_and_or_tail_node(parser * p);
+static pen_ast_node * generate_and_or_node(parser * p);
+static pen_ast_node * generate_list_tail_node(parser * p);
+static pen_ast_node * generate_list_node(parser * p);
 static pen_ast_node * generate_line_node(parser * p);
 
 // <exec> ::= WORD
@@ -147,43 +162,110 @@ static pen_ast_node * generate_redirect_list_node(parser * p) {
     return node;                        // ε: child_count stays 0
 }
 
-// <command> ::= <exec> <arg_list> <redirect_list>
+// <command> ::= <exec> <arg_list> <redirect_list>   (POSIX simple_command)
+// records [tok_start, tok_end) so the executor can slice a builtin-facing
+// tok_list scoped to just this command out of a possibly multi-command line
 static pen_ast_node * generate_command_node(parser * p) {
     pen_ast_node * node = new_node(COMMAND);
+    node->tok_start = p->pos;
     alloc_children(node, 3);
     node->nodes_children[0] = generate_exec_node(p);
     node->nodes_children[1] = generate_arg_list_node(p);
     node->nodes_children[2] = generate_redirect_list_node(p);
+    node->tok_end = p->pos;
     return node;
 }
 
 // <pipe_tail> ::= PIPE <command> <pipe_tail> | ε
-static pen_ast_node * generate_pipeline_tail_node(parser * p) {
+static pen_ast_node * generate_pipe_tail_node(parser * p) {
     pen_ast_node * node = new_node(PIPE_TAIL);
     if (check(p, PIPE)) {
         advance(p);               // consume the '|'
         alloc_children(node, 2);
         node->nodes_children[0] = generate_command_node(p);
-        node->nodes_children[1] = generate_pipeline_tail_node(p);
+        node->nodes_children[1] = generate_pipe_tail_node(p);
     }
     return node;                  // ε
 }
 
-// <pipeline> ::= <command> <pipe_tail>
-static pen_ast_node * generate_pipeline_node(parser * p) {
-    pen_ast_node * node = new_node(PIPELINE);
+// <pipe_sequence> ::= <command> <pipe_tail>   (POSIX pipe_sequence)
+static pen_ast_node * generate_pipe_sequence_node(parser * p) {
+    pen_ast_node * node = new_node(PIPE_SEQUENCE);
     alloc_children(node, 2);
     node->nodes_children[0] = generate_command_node(p);
-    node->nodes_children[1] = generate_pipeline_tail_node(p);
+    node->nodes_children[1] = generate_pipe_tail_node(p);
     return node;
 }
 
-// <line> ::= <pipeline> | ε
+// <pipeline> ::= BANG? <pipe_sequence>   (POSIX pipeline)
+// node->tok holds the Bang token when the pipeline is negated, else NULL
+static pen_ast_node * generate_pipeline_node(parser * p) {
+    pen_ast_node * node = new_node(PIPELINE);
+    if (check(p, BANG)) {
+        node->tok = advance(p);
+    }
+    alloc_children(node, 1);
+    node->nodes_children[0] = generate_pipe_sequence_node(p);
+    return node;
+}
+
+// <and_or_tail> ::= (AND_IF|OR_IF) <pipeline> <and_or_tail> | ε
+// node->tok holds the AND_IF/OR_IF operator that precedes nodes_children[0]
+static pen_ast_node * generate_and_or_tail_node(parser * p) {
+    pen_ast_node * node = new_node(AND_OR_TAIL);
+    if (!check(p, AND_IF) && !check(p, OR_IF)) {
+        return node;               // ε
+    }
+    node->tok = advance(p);
+    alloc_children(node, 2);
+    node->nodes_children[0] = generate_pipeline_node(p);   // errors (via exec) if nothing follows
+    node->nodes_children[1] = generate_and_or_tail_node(p);
+    return node;
+}
+
+// <and_or> ::= <pipeline> <and_or_tail>   (POSIX and_or: '&&' / '||' chain)
+static pen_ast_node * generate_and_or_node(parser * p) {
+    pen_ast_node * node = new_node(AND_OR);
+    alloc_children(node, 2);
+    node->nodes_children[0] = generate_pipeline_node(p);
+    node->nodes_children[1] = generate_and_or_tail_node(p);
+    return node;
+}
+
+// <list_tail> ::= (SEMI|AMP) <and_or> <list_tail> | (SEMI|AMP) | ε
+// node->tok holds the separator (';' sequences, '&' backgrounds the and_or
+// that precedes it); unlike and_or_tail, a trailing separator with nothing
+// after it is valid ("ls &", "ls;") -- tok set but child_count stays 0
+static pen_ast_node * generate_list_tail_node(parser * p) {
+    pen_ast_node * node = new_node(LIST_TAIL);
+    if (!check(p, SEMI) && !check(p, AMP)) {
+        return node;                // ε
+    }
+    node->tok = advance(p);
+    if (at_end(p)) {
+        return node;                // trailing separator, nothing follows
+    }
+    alloc_children(node, 2);
+    node->nodes_children[0] = generate_and_or_node(p);
+    node->nodes_children[1] = generate_list_tail_node(p);
+    return node;
+}
+
+// <list> ::= <and_or> <list_tail>   (POSIX list / complete_command)
+static pen_ast_node * generate_list_node(parser * p) {
+    pen_ast_node * node = new_node(LIST);
+    alloc_children(node, 2);
+    node->nodes_children[0] = generate_and_or_node(p);
+    node->nodes_children[1] = generate_list_tail_node(p);
+    return node;
+}
+
+// <line> ::= <list> | ε
 static pen_ast_node * generate_line_node(parser * p) {
     pen_ast_node * node = new_node(LINE);
     if (!at_end(p)) {
         alloc_children(node, 1);
-        node->nodes_children[0] = generate_pipeline_node(p);
+        node->nodes_children[0] = generate_list_node(p);
     }
     return node;                  // empty line: 0 children, not an error
 }
