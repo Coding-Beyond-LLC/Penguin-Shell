@@ -200,9 +200,24 @@ void pen_help(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_t
 //SECTION: Main shell loop commands
 //method that prints the welcome message when the shell is first run
 static void greet() {
-    printf("===========================\n");
-    printf("    P  E  N  G  U  I  N    \n");
-    printf("===========================\n");
+    printf(
+        "\033[38;2;0;255;255m"
+        "+-------------------------------------------------+\n"
+        "|                                                 |\n"
+        "\033[38;2;255;255;255m"
+        "|  ####   #####  #   #   ####  #   #  ###  #   #  |\n"
+        "|  #   #  #      ##  #  #      #   #   #   ##  #  |\n"
+        "|  ####   ###    # # #  #  ##  #   #   #   # # #  |\n"
+        "|  #      #      #  ##  #   #  #   #   #   #  ##  |\n"
+        "|  #      #####  #   #   ####   ###   ###  #   #  |\n"
+        "|                                                 |\n"
+        "\033[38;2;150;150;150m"
+        "|           (c) 2026 Coding Beyond LLC            |\n"
+        "|                                                 |\n"
+        "\033[38;2;0;255;255m"
+        "+-------------------------------------------------+\n"
+        "\033[0m"
+    );
 }
 
 static int is_help_flag(const char * arg) {
