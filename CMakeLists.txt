@@ -3,6 +3,9 @@ project(penguin C)
 
 set(CMAKE_C_STANDARD 23)
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBGIT2 REQUIRED libgit2)
+
 add_executable(penguin src/main.c
         src/pen-main/penguin-main.h
         src/pen-main/penguin-main.c
@@ -17,6 +20,6 @@ add_executable(penguin src/main.c
         src/pen-lan/lan_structs.h
         src/pen-util/pen-util.h)
 
-target_include_directories(penguin PRIVATE pen-main antarctic pen-lan pen-util)
+target_include_directories(penguin PRIVATE pen-main antarctic pen-lan pen-util ${LIBGIT2_INCLUDE_DIRS})
 
-target_link_libraries(penguin PRIVATE readline)
+target_link_libraries(penguin PRIVATE readline ${LIBGIT2_LIBRARIES})

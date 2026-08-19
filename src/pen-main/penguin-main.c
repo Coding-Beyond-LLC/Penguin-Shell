@@ -5,6 +5,10 @@
 #include "penguin-main.h"
 #include "../pen-util/pen-util.h"
 #include <bits/getopt_ext.h>
+#include <git2/deprecated.h>
+#include <git2/global.h>
+#include <git2/refs.h>
+#include <git2/repository.h>
 #include <readline/history.h>
 #include <string.h>
 
@@ -537,12 +541,45 @@ static void process_rc(history * hist, pen_alias_table * alias_table){
 
 }
 
+char * get_git_branch(char * cwd){
+
+    // Buffer to hold the path of the found repository root
+    git_buf root_path = {0};
+
+    git_repository * repo = NULL;
+    git_reference * head = NULL;
+    char * branch = NULL;
+
+    int res = git_repository_discover(&root_path, cwd, 0, NULL);
+
+    //open the repository
+    if(git_repository_open(&repo, root_path.ptr) != 0){
+        return NULL;
+    }
+
+    //git_repository_head resolves HEAD to the branch tip it points at (a direct
+    //reference), so no symbolic-ref check is needed here
+    if(git_repository_head(&head, repo) == 0){
+        //duplicate the name since it's owned by head, which we free below
+        branch = strdup(git_reference_shorthand(head));
+    }
+
+    git_reference_free(head);
+    git_repository_free(repo);
+    git_buf_free(&root_path);
+
+    return branch;
+
+}
+
 static char * build_prompt(char * prompt) {
 
     char cwd[MAX_PATH_LEN] = {0};
 
     //get the current working directory
     getcwd(cwd, MAX_PATH_LEN);
+
+    char * git_branch = get_git_branch(cwd);
 
     char user[MAX_PATH_LEN] = {0};
     char host[MAX_PATH_LEN] = {0};
@@ -554,8 +591,16 @@ static char * build_prompt(char * prompt) {
     uid_t uid = getuid();
     struct passwd *pw = getpwuid(uid);
 
+    //build the git branch segment, colored, only if we're inside a repo
+    char git_segment[128] = {0};
+    if(git_branch != NULL){
+        snprintf(git_segment, sizeof(git_segment), "\001\033[38;2;133;50;168m\002(%.32s)\001\033[38;2;0;255;255m\002 ", git_branch);
+    }
+
     //print the prompt with the current working directory
-    snprintf(prompt, MAX_PATH_LEN + 256, "\001\033[38;2;0;255;255m\002" "%.32s@%.32s#%s (•ᴗ•)ゝ " "\001\033[0m\002", pw->pw_name, host, cwd);
+    snprintf(prompt, MAX_PATH_LEN + 256 + strlen(git_segment), "\001\033[38;2;0;255;255m\002" "%.32s@%.32s#%s (•ᴗ•)ゝ %s" "\001\033[0m\002", pw->pw_name, host, cwd, git_segment);
+
+    free(git_branch);
 
     return prompt;
 }
@@ -591,6 +636,9 @@ static void parse_options(const int argc, char ** argv, history * hist, pen_alia
 //SECTION: Main method
 //main method that runs the shell, handles the main REPL loop and calls the appropriate methods to execute the commands entered by the user
 int run(int argc, char ** argv, history * hist, pen_alias_table * alias_table) {
+
+    //Initialize git tools
+    git_libgit2_init();
 
     parse_options(argc, argv, hist, alias_table);
 

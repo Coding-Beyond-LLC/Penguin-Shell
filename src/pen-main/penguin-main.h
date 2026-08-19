@@ -17,6 +17,7 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 #include <pwd.h>
+#include <git2.h>
 #include "../antarctic/antarctic_env.h"
 #include "../pen-lan/lex.h"
 #include "../pen-lan/parse.h"
