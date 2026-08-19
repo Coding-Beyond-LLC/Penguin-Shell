@@ -1,5 +1,5 @@
 //
-// Created by nate on 12/22/25.
+// Copyright (c) 2026 Coding Beyond LLC. All rights reserved.
 //
 //Main REPL loop for the penguin shell
 #include "penguin-main.h"
@@ -20,6 +20,7 @@
     "  alias [alias name]=[alias value]      Creates an alias with the specified name.\n" \
     "  cd [path]                             Change directory to path (use * for home directory).\n" \
     "  exit/quit                             Closes the shell.\n"\
+    "  greet                                 Outputs the shell's startup banner.\n" \
     "  history                               Outputs command history throughout the shell's runtime up to a max of 128 commands (latest commands).\n" \
     "  pwd                                   Outputs the current working directory.\n" \
     "  unalias [alias name]                  Deletes the specified alias.\n" \
@@ -28,6 +29,7 @@
 #define ALIAS_USG "alias [alias name]=[alias value], Creates an alias with the specified name.\n"
 #define CD_USG "cd [path], Change directory to path (use * for home directory).\n"
 #define EXIT_USG "exit, Closes the shell.\n"
+#define GREET_USG "greet, Outputs the shell's startup banner.\n"
 #define HIST_USG "history, Outputs command history throughout the shell's runtime up to a max of 128 commands (latest commands).\n"
 #define PWD_USG "pwd, Outputs the current working directory.\n"
 #define UNALIAS_USG "unalias [alias name], deletes the specified alias.\n"
@@ -60,6 +62,7 @@ static pen_builtin pen_builtins[] = {
     {"alias", pen_export, ALIAS_USG},
     {"cd", pen_cd, CD_USG},
     {"exit", pen_exit, EXIT_USG},
+    {"greet", pen_greet, GREET_USG},
     {"help", pen_help, USAGE},
     { "history", pen_print_history, HIST_USG},
     {"quit", pen_exit, EXIT_USG},
@@ -203,7 +206,13 @@ void pen_help(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_t
 
 //SECTION: Main shell loop commands
 //method that prints the welcome message when the shell is first run
-static void greet() {
+void pen_greet(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, const size_t arg_count) {
+
+    (void) tok_list;
+    (void) hist;
+    (void) alias_table;
+    (void) arg_count;
+
     printf(
         "+-------------------------------------------------+\n"
         "|                                                 |\n"
@@ -644,7 +653,7 @@ int run(int argc, char ** argv, history * hist, pen_alias_table * alias_table) {
 
     process_rc(hist, alias_table);
 
-    greet();
+    pen_greet(NULL, NULL, NULL, 0);
 
     //main REPL loop
     char * cmmd;
