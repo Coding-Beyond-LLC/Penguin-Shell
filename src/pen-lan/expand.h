@@ -7,6 +7,8 @@
 
 pen_tok_list * expand_aliases(pen_tok_list * tok_list, pen_alias_table * alias_table);
 
-pen_tok_list * expand_env_vars(pen_tok_list * tok_list);
+pen_tok_list * normalize_env_var_tokens(pen_tok_list * tok_list);
+
+char * expand_word_text(const char * text, int last_status);
 
 #endif

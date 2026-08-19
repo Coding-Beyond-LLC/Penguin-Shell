@@ -34,6 +34,11 @@
 
 static int pen_should_exit = 0;
 
+// exit status of the last foreground list item, exposed to the next line's
+// $?/${?} expansion (see process_line); a backgrounded item ("cmd &") never
+// touches this -- matching real shells, its status is only visible via wait
+static int pen_last_status = 0;
+
 static struct option pen_options[] = {
     {"help", no_argument, NULL, 'h'},
     {"no-disk-hist", no_argument, NULL, 'x'},
@@ -76,6 +81,13 @@ static void handle_help(const pen_builtin * builtin) {
 
 static char ** flatten_command(const pen_ast_node * command); // defined below
 
+// frees an argv built by flatten_command: every entry is now an owned,
+// freshly expanded copy (see expand_word_text), not borrowed from the AST
+static void free_argv(char ** argv) {
+    for (size_t i = 0; argv[i] != NULL; i++) free(argv[i]);
+    free(argv);
+}
+
 static void apply_redirects(const pen_ast_node * redirect_list) {
     const pen_ast_node * cur = redirect_list;
     while (cur->child_count > 0) {
@@ -104,16 +116,17 @@ static void apply_redirects(const pen_ast_node * redirect_list) {
     }
 }
 
-//method that handles execution of the commands, if the command is not found then it will print an error message
-static void waddle(const pen_ast_node * command, int wait_flag) {
+//method that handles execution of the commands, if the command is not found then it will print an error message;
+//returns the child's exit status (or 1 if it died abnormally) so &&/|| can decide whether to short-circuit
+static int waddle(const pen_ast_node * command) {
 
     char ** argv = flatten_command(command);
     pid_t pid = fork();
 
     if (pid < 0) {
         printf("Error executing child! errno: %d\n", errno);
-        free(argv);
-        exit(-1);
+        free_argv(argv);
+        return 1;
     }
 
     if (pid == 0) {
@@ -123,9 +136,10 @@ static void waddle(const pen_ast_node * command, int wait_flag) {
         _exit(errno == ENOENT ? 127 : 126);
     }
 
+    free_argv(argv);
     int child_status;
-    if(wait_flag) wait(&child_status);
-    free(argv);
+    waitpid(pid, &child_status, 0);
+    return WIFEXITED(child_status) ? WEXITSTATUS(child_status) : 1;
 }
 
 
@@ -186,9 +200,19 @@ void pen_help(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_t
 //SECTION: Main shell loop commands
 //method that prints the welcome message when the shell is first run
 static void greet() {
-    printf("===========================\n");
-    printf("    P  E  N  G  U  I  N    \n");
-    printf("===========================\n");
+    printf(
+        "+-------------------------------------------------+\n"
+        "|                                                 |\n"
+        "|  ####   #####  #   #   ####  #   #  ###  #   #  |\n"
+        "|  #   #  #      ##  #  #      #   #   #   ##  #  |\n"
+        "|  ####   ###    # # #  #  ##  #   #   #   # # #  |\n"
+        "|  #      #      #  ##  #   #  #   #   #   #  ##  |\n"
+        "|  #      #####  #   #   ####   ###   ###  #   #  |\n"
+        "|                                                 |\n"
+        "|           (c) 2026 Coding Beyond LLC            |\n"
+        "|                                                 |\n"
+        "+-------------------------------------------------+\n"
+    );
 }
 
 static int is_help_flag(const char * arg) {
@@ -202,34 +226,61 @@ static void record_history(history *hist, char *cmmd, pen_tok_list * tok_list, s
 
 }
 
-static void dispatch_command(const pen_ast_node * command, pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count) {
-
-    pen_builtin * builtin = pen_lookup(tok_list);
-
-    if(builtin == NULL) {
-        if(strcmp(tok_list->toks[tok_list->n - 1].text, "&") == 0){
-            waddle(command, 0);
-        }else{
-            waddle(command, 1);
-        }
-        return;
+// Builds a builtin-facing pen_tok_list scoped to just this command's own
+// tokens (see pen_ast_node.tok_start/tok_end) -- necessary now that a line
+// can hold several commands ("cd /tmp; ls"): builtins like pen_export index
+// tok_list->toks[] and check tok_list->n directly, so handing them the
+// whole line's token list would let a later command's tokens leak into an
+// earlier builtin's view of its own arguments. Each token's text is also
+// expanded here (${VAR}/${?}/$?), using the *current* pen_last_status, so a
+// builtin sees the same freshly-resolved values a real command's argv would.
+static pen_tok_list command_tok_slice(const pen_ast_node * command, pen_tok_list * tok_list) {
+    size_t n = command->tok_end - command->tok_start;
+    pen_tok_list slice;
+    slice.n = n;
+    slice.args = NULL;          // unused by any builtin; record_history uses the whole-line tok_list instead
+    slice.toks = malloc(sizeof(pen_tok) * n);
+    for (size_t i = 0; i < n; i++) {
+        pen_tok * src = &tok_list->toks[command->tok_start + i];
+        slice.toks[i].text     = expand_word_text(src->text, pen_last_status);
+        slice.toks[i].tok_type = src->tok_type;
     }
-
-    if(arg_count > 1 && is_help_flag(tok_list->toks[1].text)) {
-        handle_help(builtin);
-        return;
-    }
-
-    builtin->pen_func(tok_list, hist, alias_table, arg_count);
+    return slice;
 }
 
-//counts how many command stages the pipeline holds by walking the PIPE_TAIL chain
-static size_t pipeline_stage_count(const pen_ast_node * pipeline) {
-    size_t count = 1;                                       // the leading <command>
-    const pen_ast_node * tail = pipeline->nodes_children[1]; // <pipe_tail>
-    while (tail->child_count > 0) {                         // PIPE <command> <pipe_tail>
+static void free_command_tok_slice(pen_tok_list * slice) {
+    for (size_t i = 0; i < slice->n; i++) free(slice->toks[i].text);
+    free(slice->toks);
+}
+
+//dispatches a single simple_command (builtin or exec'd); returns its exit status so &&/|| can decide whether to short-circuit
+static int dispatch_command(const pen_ast_node * command, pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table) {
+
+    pen_tok_list slice = command_tok_slice(command, tok_list);
+    pen_builtin * builtin = pen_lookup(&slice);
+    int status;
+
+    if(builtin == NULL) {
+        status = waddle(command);
+    } else if(slice.n > 1 && is_help_flag(slice.toks[1].text)) {
+        handle_help(builtin);
+        status = 0;
+    } else {
+        builtin->pen_func(&slice, hist, alias_table, slice.n);
+        status = 0;             // builtins don't report a distinct exit status today
+    }
+
+    free_command_tok_slice(&slice);
+    return status;
+}
+
+//counts how many command stages the pipe_sequence holds by walking the PIPE_TAIL chain
+static size_t pipe_sequence_stage_count(const pen_ast_node * pipe_sequence) {
+    size_t count = 1;                                            // the leading <command>
+    const pen_ast_node * tail = pipe_sequence->nodes_children[1]; // <pipe_tail>
+    while (tail->child_count > 0) {                              // PIPE <command> <pipe_tail>
         count++;
-        tail = tail->nodes_children[1];                     // step to the next <pipe_tail>
+        tail = tail->nodes_children[1];                          // step to the next <pipe_tail>
     }
     return count;
 }
@@ -244,35 +295,30 @@ static size_t count_args(const pen_ast_node * arg_list) {
     return count;
 }
 
-// Returns a malloc'd NULL-terminated argv; strings are borrowed from the AST (do not free them)
+// Returns a malloc'd NULL-terminated argv; every entry is a freshly expanded
+// (${VAR}/${?}/$?, via the current pen_last_status) owned copy -- free with
+// free_argv, not a bare free(argv)
 static char ** flatten_command(const pen_ast_node * command) {
     const pen_ast_node * exec_node = command->nodes_children[0];
     const pen_ast_node * arg_list  = command->nodes_children[1];
     size_t argc = 1 + count_args(arg_list);
 
-    // A trailing lone "&" marks a background job for dispatch_command and
-    // must not be forwarded to the exec'd program as an argument.
-    const pen_ast_node * last_arg = NULL;
-    for (const pen_ast_node * cur = arg_list; cur->child_count > 0; cur = cur->nodes_children[1]) {
-        last_arg = cur->nodes_children[0];
-    }
-    if (last_arg && strcmp(last_arg->tok->text, "&") == 0) argc--;
-
     char ** argv = malloc(sizeof(char *) * (argc + 1));
-    argv[0] = exec_node->tok->text;
+    argv[0] = expand_word_text(exec_node->tok->text, pen_last_status);
     const pen_ast_node * cur = arg_list;
     for (size_t i = 1; i < argc; i++) {
-        argv[i] = cur->nodes_children[0]->tok->text;
+        argv[i] = expand_word_text(cur->nodes_children[0]->tok->text, pen_last_status);
         cur = cur->nodes_children[1];
     }
     argv[argc] = NULL;
     return argv;
 }
 
-static void execute_pipeline(const pen_ast_node * pipeline, size_t stage_count) {
+//runs a multi-stage pipe_sequence; returns the last stage's exit status (POSIX: a pipeline's status is its last command's)
+static int execute_pipe_sequence(const pen_ast_node * pipe_sequence, size_t stage_count) {
     pen_ast_node ** commands = malloc(sizeof(pen_ast_node *) * stage_count);
-    commands[0] = pipeline->nodes_children[0];
-    const pen_ast_node * tail = pipeline->nodes_children[1];
+    commands[0] = pipe_sequence->nodes_children[0];
+    const pen_ast_node * tail = pipe_sequence->nodes_children[1];
     for (size_t i = 1; i < stage_count; i++) {
         commands[i] = tail->nodes_children[0];
         tail = tail->nodes_children[1];
@@ -284,7 +330,7 @@ static void execute_pipeline(const pen_ast_node * pipeline, size_t stage_count) 
             fprintf(stderr, "penguin: pipe: %s\n", strerror(errno));
             free(commands);
             free(pipes);
-            return;
+            return 1;
         }
     }
 
@@ -295,7 +341,7 @@ static void execute_pipeline(const pen_ast_node * pipeline, size_t stage_count) 
         pids[i] = fork();
         if (pids[i] < 0) {
             fprintf(stderr, "penguin: fork: %s\n", strerror(errno));
-            free(argv);
+            free_argv(argv);
             break;
         }
         if (pids[i] == 0) {
@@ -310,37 +356,97 @@ static void execute_pipeline(const pen_ast_node * pipeline, size_t stage_count) 
             fprintf(stderr, "%s: %s\n", argv[0], strerror(errno));
             _exit(errno == ENOENT ? 127 : 126);
         }
-        free(argv);
+        free_argv(argv);
     }
 
     for (size_t i = 0; i < stage_count - 1; i++) {
         close(pipes[i][0]);
         close(pipes[i][1]);
     }
+    int last_status = 1;
     for (size_t i = 0; i < stage_count; i++) {
         int status;
         waitpid(pids[i], &status, 0);
+        if (i == stage_count - 1) last_status = WIFEXITED(status) ? WEXITSTATUS(status) : 1;
     }
 
     free(commands);
     free(pipes);
     free(pids);
+    return last_status;
 }
 
-//walks the parsed line and runs it; single commands reuse the existing dispatch path
-static void execute_line(pen_ast_node * line, pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table) {
+//runs a <pipeline>: dispatches its pipe_sequence, then applies '!' negation; returns the (possibly negated) exit status.
+//updates pen_last_status here (not just once per line) so $?/${?} in a later command -- even one on the
+//same line, or later in the same and_or chain -- see the freshest value, matching real shell semantics
+static int execute_pipeline(const pen_ast_node * pipeline, pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table) {
+    const pen_ast_node * pipe_sequence = pipeline->nodes_children[0];
+    size_t stages = pipe_sequence_stage_count(pipe_sequence);
 
-    if (line->child_count == 0) return;                     // empty line, nothing to run
-
-    pen_ast_node * pipeline = line->nodes_children[0];
-    size_t stages = pipeline_stage_count(pipeline);
-
+    int status;
     if (stages == 1) {
-        pen_ast_node * command = pipeline->nodes_children[0];
-        dispatch_command(command, tok_list, hist, alias_table, tok_list->n);
+        status = dispatch_command(pipe_sequence->nodes_children[0], tok_list, hist, alias_table);
     } else {
-        execute_pipeline(pipeline, stages);
+        status = execute_pipe_sequence(pipe_sequence, stages);
     }
+
+    if (pipeline->tok != NULL) status = (status == 0) ? 1 : 0;   // leading Bang negates
+    pen_last_status = status;
+    return status;
+}
+
+//runs an <and_or> chain, short-circuiting on '&&' (only run next on success) / '||' (only on failure); returns the last pipeline run's status
+static int execute_and_or(const pen_ast_node * and_or, pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table) {
+    int status = execute_pipeline(and_or->nodes_children[0], tok_list, hist, alias_table);
+
+    const pen_ast_node * tail = and_or->nodes_children[1];
+    while (tail->child_count > 0) {                      // (AND_IF|OR_IF) <pipeline> <and_or_tail>
+        int run_next = (tail->tok->tok_type == AND_IF) ? (status == 0) : (status != 0);
+        if (run_next) status = execute_pipeline(tail->nodes_children[0], tok_list, hist, alias_table);
+        tail = tail->nodes_children[1];
+    }
+    return status;
+}
+
+//runs one <list> item, backgrounding it behind a fork when followed by '&' so the shell doesn't
+//block on this and_or chain's internal (synchronous) &&/|| evaluation -- there's no job control here,
+//just enough indirection that "a && b &" doesn't stall the prompt waiting on 'a'
+static void execute_list_item(const pen_ast_node * and_or, pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, int background) {
+    if (!background) {
+        execute_and_or(and_or, tok_list, hist, alias_table);   // updates pen_last_status internally (see execute_pipeline)
+        return;
+    }
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        fprintf(stderr, "penguin: fork: %s\n", strerror(errno));
+        return;
+    }
+    if (pid == 0) {
+        execute_and_or(and_or, tok_list, hist, alias_table);
+        _exit(0);
+    }
+}
+
+//walks a <list>: and_or (separator_op and_or)*, running each and_or in order (';') or detached ('&')
+static void execute_list(const pen_ast_node * list, pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table) {
+    const pen_ast_node * and_or = list->nodes_children[0];
+    const pen_ast_node * tail   = list->nodes_children[1];
+
+    for (;;) {
+        int background = tail->tok != NULL && tail->tok->tok_type == AMP;
+        execute_list_item(and_or, tok_list, hist, alias_table, background);
+
+        if (tail->child_count == 0) break;   // ε, or a trailing separator with nothing after it
+        and_or = tail->nodes_children[0];
+        tail   = tail->nodes_children[1];
+    }
+}
+
+//walks the parsed line and runs it
+static void execute_line(pen_ast_node * line, pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table) {
+    if (line->child_count == 0) return;                     // empty line, nothing to run
+    execute_list(line->nodes_children[0], tok_list, hist, alias_table);
 }
 
 static void process_line(char * cmmd, history * hist, pen_alias_table * alias_table, int is_pen_rc) {
@@ -356,7 +462,13 @@ static void process_line(char * cmmd, history * hist, pen_alias_table * alias_ta
     pen_tok_list * expanded_tok_list = NULL;
 
     if(strcmp(tok_list->toks[0].text, "alias") != 0) expanded_tok_list = expand_aliases(tok_list, alias_table);
-    pen_tok_list * expanded_tok_list_with_vars = expanded_tok_list == NULL ? expand_env_vars(tok_list) : expand_env_vars(expanded_tok_list);
+    // structural only: retypes ENV_VAR tokens the grammar should accept as a WORD (e.g.
+    // "${FOO}", "$?") so parsing succeeds. The actual value substitution happens per-command
+    // at execution time (flatten_command / command_tok_slice), not here -- so $?/${?} reflect
+    // the freshest exit status even for a later command on the same line ("false; echo ${?}").
+    pen_tok_list * expanded_tok_list_with_vars = expanded_tok_list == NULL
+        ? normalize_env_var_tokens(tok_list)
+        : normalize_env_var_tokens(expanded_tok_list);
 
     //record every non-empty line, the way a shell keeps everything you typed
     //we record the original input pre variable resolution
@@ -389,7 +501,7 @@ static void process_rc(history * hist, pen_alias_table * alias_table){
 
     if (home != NULL) {
 
-        char * pen_rc_file_name = malloc(strlen(home) + 7);
+        char * pen_rc_file_name = malloc(strlen(home) + 8);   // "/.penrc" (7 chars) + NUL
         strcpy(pen_rc_file_name, home);
         strcat(pen_rc_file_name, "/.penrc");
 
