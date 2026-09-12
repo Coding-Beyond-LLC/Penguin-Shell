@@ -1,5 +1,5 @@
 //
-// Created by nate on 12/24/25.
+// Copyright (c) 2026 Coding Beyond LLC. All rights reserved.
 //
 
 #include <readline/history.h>

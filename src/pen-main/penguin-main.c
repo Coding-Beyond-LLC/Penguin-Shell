@@ -1,12 +1,18 @@
 //
-// Created by nate on 12/22/25.
+// Copyright (c) 2026 Coding Beyond LLC. All rights reserved.
 //
 //Main REPL loop for the penguin shell
 #include "penguin-main.h"
 #include "../pen-util/pen-util.h"
 #include <bits/getopt_ext.h>
+#include <git2/deprecated.h>
+#include <git2/global.h>
+#include <git2/refs.h>
+#include <git2/repository.h>
+#include <pwd.h>
 #include <readline/history.h>
 #include <string.h>
+#include <unistd.h>
 
 #define USAGE   \
     "The penguin shell (•ᴗ•)ゝ\n" \
@@ -16,6 +22,7 @@
     "  alias [alias name]=[alias value]      Creates an alias with the specified name.\n" \
     "  cd [path]                             Change directory to path (use * for home directory).\n" \
     "  exit/quit                             Closes the shell.\n"\
+    "  greet                                 Outputs the shell's startup banner.\n" \
     "  history                               Outputs command history throughout the shell's runtime up to a max of 128 commands (latest commands).\n" \
     "  pwd                                   Outputs the current working directory.\n" \
     "  unalias [alias name]                  Deletes the specified alias.\n" \
@@ -24,6 +31,7 @@
 #define ALIAS_USG "alias [alias name]=[alias value], Creates an alias with the specified name.\n"
 #define CD_USG "cd [path], Change directory to path (use * for home directory).\n"
 #define EXIT_USG "exit, Closes the shell.\n"
+#define GREET_USG "greet, Outputs the shell's startup banner.\n"
 #define HIST_USG "history, Outputs command history throughout the shell's runtime up to a max of 128 commands (latest commands).\n"
 #define PWD_USG "pwd, Outputs the current working directory.\n"
 #define UNALIAS_USG "unalias [alias name], deletes the specified alias.\n"
@@ -31,6 +39,15 @@
 
 #define BUILT_INS_COUNT (sizeof(pen_builtins) / sizeof(pen_builtin))
 #define PEN_BUILTIN_KEY(b) ((b)->command)
+
+// shared by build_prompt's snprintf and its caller's buffer declaration --
+// large enough for a resolved PS1 (template + a full MAX_PATH_LEN cwd) plus
+// the git segment and reset code appended after it
+#define PROMPT_BUF_LEN (MAX_PATH_LEN + 256)
+
+// placeholder PS1 resolves at render time (see build_prompt) so the prompt
+// tracks the live working directory instead of a snapshot baked in at boot
+#define PS1_CWD_TOKEN "{cwd}"
 
 static int pen_should_exit = 0;
 
@@ -56,6 +73,7 @@ static pen_builtin pen_builtins[] = {
     {"alias", pen_export, ALIAS_USG},
     {"cd", pen_cd, CD_USG},
     {"exit", pen_exit, EXIT_USG},
+    {"greet", pen_greet, GREET_USG},
     {"help", pen_help, USAGE},
     { "history", pen_print_history, HIST_USG},
     {"quit", pen_exit, EXIT_USG},
@@ -162,11 +180,18 @@ void pen_exit(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_t
 
 //method that implements the pwd built in command, prints the current working directory to the user
 void pen_pwd(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, const size_t arg_count) {
+    (void)tok_list;
     (void)hist;
+    (void)alias_table;
     (void)arg_count;
-    char cwd[MAX_PATH_LEN] = {0};
-    getcwd(cwd, MAX_PATH_LEN);
-    printf("%s\n", cwd);
+    char * pwd = getenv("PWD");
+    if (pwd == NULL) {
+        char cwd[MAX_PATH_LEN] = {0};
+        getcwd(cwd, MAX_PATH_LEN);
+        printf("%s\n", cwd);
+    } else {
+        printf("%s\n", pwd);
+    }
 }
 
 //method that implements the cd built in command, changes the current working directory to the specified path, if no path is specified then it changes to the home directory
@@ -186,6 +211,12 @@ void pen_cd(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_tab
         }
     }
 
+    if (cd_res == 0) {
+        char cwd[MAX_PATH_LEN] = {0};
+        if (getcwd(cwd, MAX_PATH_LEN) != NULL) {
+            setenv("PWD", cwd, 1);
+        }
+    }
 }
 
 void pen_help(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count){
@@ -199,7 +230,13 @@ void pen_help(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_t
 
 //SECTION: Main shell loop commands
 //method that prints the welcome message when the shell is first run
-static void greet() {
+void pen_greet(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, const size_t arg_count) {
+
+    (void) tok_list;
+    (void) hist;
+    (void) alias_table;
+    (void) arg_count;
+
     printf(
         "+-------------------------------------------------+\n"
         "|                                                 |\n"
@@ -537,6 +574,51 @@ static void process_rc(history * hist, pen_alias_table * alias_table){
 
 }
 
+char * get_git_branch(char * cwd){
+
+    // Buffer to hold the path of the found repository root
+    git_buf root_path = {0};
+
+    git_repository * repo = NULL;
+    git_reference * head = NULL;
+    char * branch = NULL;
+
+    int res = git_repository_discover(&root_path, cwd, 0, NULL);
+
+    //open the repository
+    if(git_repository_open(&repo, root_path.ptr) != 0){
+        return NULL;
+    }
+
+    //git_repository_head resolves HEAD to the branch tip it points at (a direct
+    //reference), so no symbolic-ref check is needed here
+    if(git_repository_head(&head, repo) == 0){
+        //duplicate the name since it's owned by head, which we free below
+        branch = strdup(git_reference_shorthand(head));
+    }
+
+    git_reference_free(head);
+    git_repository_free(repo);
+    git_buf_free(&root_path);
+
+    return branch;
+
+}
+
+// Substitutes the (single) PS1_CWD_TOKEN placeholder in ps1_template with the
+// live cwd -- decoupled from PWD/cd this way, PS1 is just a template and never
+// needs updating when the working directory changes; only the render needs
+// the current directory. A template without the token is copied through as-is.
+static void resolve_ps1(const char * ps1_template, const char * cwd, char * out, size_t out_size) {
+    const char * token = strstr(ps1_template, PS1_CWD_TOKEN);
+    if (token == NULL) {
+        snprintf(out, out_size, "%s", ps1_template);
+        return;
+    }
+    int prefix_len = (int)(token - ps1_template);
+    snprintf(out, out_size, "%.*s%s%s", prefix_len, ps1_template, cwd, token + strlen(PS1_CWD_TOKEN));
+}
+
 static char * build_prompt(char * prompt) {
 
     char cwd[MAX_PATH_LEN] = {0};
@@ -544,18 +626,26 @@ static char * build_prompt(char * prompt) {
     //get the current working directory
     getcwd(cwd, MAX_PATH_LEN);
 
-    char user[MAX_PATH_LEN] = {0};
-    char host[MAX_PATH_LEN] = {0};
+    char * git_branch = get_git_branch(cwd);
 
-    //get host name
-    gethostname(host, sizeof(host));
+    //build the git branch segment, colored, only if we're inside a repo
+    char git_segment[128] = {0};
+    if(git_branch != NULL){
+        snprintf(git_segment, sizeof(git_segment), "\001\033[38;2;133;50;168m\002(%.32s)\001\033[38;2;0;255;255m\002 ", git_branch);
+    }
 
-    //get user id
-    uid_t uid = getuid();
-    struct passwd *pw = getpwuid(uid);
+    //fetch the base prompt from PS1 and resolve its cwd placeholder against the live cwd
+    char * ps1_template = getenv("PS1");
+    if(ps1_template == NULL){
+        ps1_template = "";
+    }
 
-    //print the prompt with the current working directory
-    snprintf(prompt, MAX_PATH_LEN + 256, "\001\033[38;2;0;255;255m\002" "%.32s@%.32s#%s (•ᴗ•)ゝ " "\001\033[0m\002", pw->pw_name, host, cwd);
+    char ps1[PROMPT_BUF_LEN];
+    resolve_ps1(ps1_template, cwd, ps1, sizeof(ps1));
+
+    snprintf(prompt, PROMPT_BUF_LEN, "%s%s" "\001\033[0m\002", ps1, git_segment);
+
+    free(git_branch);
 
     return prompt;
 }
@@ -586,21 +676,102 @@ static void parse_options(const int argc, char ** argv, history * hist, pen_alia
     }
 }
 
+static void set_penguin_boot_vars(history * hist, pen_alias_table * alias_table){
+
+    //Set the ENV variable
+    process_line("xpt ENV=\"${HOME}/.penrc\"", hist, alias_table, 1);
+
+    //Set the HOME variable
+    uid_t uid = getuid();
+    struct passwd * pwd = getpwuid(uid);
+    if(pwd != NULL){
+        char home_cmd[MAX_PATH_LEN + 16];
+        snprintf(home_cmd, sizeof(home_cmd), "xpt HOME=%s", pwd->pw_dir);
+        process_line(home_cmd, hist, alias_table, 1);
+    }else{
+        printf("Error setting HOME! errno: %d\n", errno);
+    }
+
+    //Set the IFS variable
+    process_line("xpt IFS=\" \t\n\"", hist, alias_table, 1);
+
+    //Set the LANG variable
+    process_line("xpt LANG=\"C.UTF-8\"", hist, alias_table, 1);
+
+    //Set the LC_ALL variable
+    process_line("xpt LC_ALL=\"C.UTF-8\"", hist, alias_table, 1);
+
+    //Set the LC_COLLATE variable
+    process_line("xpt LC_COLLATE=\"en_US.UTF-8\"", hist, alias_table, 1);
+
+    //Set the LC_CTYPE variable
+    process_line("xpt LC_COLLATE=\"POSIX\"", hist, alias_table, 1);
+
+    //Set the LC_MESSAGES variable
+    process_line("xpt LC_MESSAGES=\"en_US.UTF-8\"", hist, alias_table, 1);
+
+    //Set the LINENO variable
+    process_line("xpt LINENO=1", hist, alias_table, 1);
+
+    //Set the NLSPATH variable
+    process_line("xpt NLSPATH=/usr/share/nls/%L/%N.cat:/usr/share/nls/default/%N.cat", hist, alias_table, 1);
+
+    //Set the PATH variable
+    process_line("xpt PATH=\"/home/nate/Penguin-Shell/build:/home/nate/pychar-2023.2.5/bin:/home/nate/GoLand-2025.1.3/bin:/home/nate/clion/bin:${PATH}\"", hist, alias_table, 1);
+
+    //Set the PPID variable
+    char ppid_cmd[32];
+    snprintf(ppid_cmd, sizeof(ppid_cmd), "xpt PPID=%d", getppid());
+    process_line(ppid_cmd, hist, alias_table, 1);
+
+    //Set the PS1 variable. Uses the PS1_CWD_TOKEN placeholder rather than a
+    //snapshot of the boot-time cwd -- build_prompt resolves it against the
+    //live cwd on every render, so cd never needs to touch PS1.
+    char ps1_host[MAX_PATH_LEN] = {0};
+    gethostname(ps1_host, sizeof(ps1_host));
+
+    if(pwd != NULL){
+        char ps1_cmd[MAX_PATH_LEN + 256];
+        snprintf(ps1_cmd, sizeof(ps1_cmd), "xpt PS1=\"\001\033[38;2;0;255;255m\002%.32s@%.32s#" PS1_CWD_TOKEN " (•ᴗ•)ゝ \"", pwd->pw_name, ps1_host);
+        process_line(ps1_cmd, hist, alias_table, 1);
+    }
+
+    //Set the PS2 variable
+    process_line("xpt PS2=\"(•ᴗ•)ゝ -> \"", hist, alias_table, 1);
+
+    //Set the PS4 variable
+    process_line("xpt PS4=\"(•ᴗ•)ゝ [Line: $LINENO] -> \"", hist, alias_table, 1);
+
+    //Set the PWD variable
+    char pwd_cwd[MAX_PATH_LEN] = {0};
+    if (getcwd(pwd_cwd, MAX_PATH_LEN) != NULL) {
+        char pwd_cmd[MAX_PATH_LEN + 16];
+        snprintf(pwd_cmd, sizeof(pwd_cmd), "xpt PWD=%s", pwd_cwd);
+        process_line(pwd_cmd, hist, alias_table, 1);
+    }
+}
+
 //END SECTION: Main shell loop commands
 
 //SECTION: Main method
 //main method that runs the shell, handles the main REPL loop and calls the appropriate methods to execute the commands entered by the user
 int run(int argc, char ** argv, history * hist, pen_alias_table * alias_table) {
 
+    //set the POSIX vars
+    set_penguin_boot_vars(hist, alias_table);
+
+    //Initialize git tools
+    git_libgit2_init();
+
     parse_options(argc, argv, hist, alias_table);
 
     process_rc(hist, alias_table);
 
-    greet();
+    pen_greet(NULL, NULL, NULL, 0);
 
     //main REPL loop
     char * cmmd;
-    char prompt[MAX_PATH_LEN + 38];
+    char prompt[PROMPT_BUF_LEN];
 
     while (!pen_should_exit && (cmmd = readline(build_prompt(prompt))) != NULL) {
         process_line(cmmd, hist, alias_table, 0);

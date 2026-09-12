@@ -1,5 +1,5 @@
 //
-// Created by nate on 12/22/25.
+// Copyright (c) 2026 Coding Beyond LLC. All rights reserved.
 //
 
 #ifndef PENGUIN_PENGUIN_MAIN_H
@@ -17,6 +17,7 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 #include <pwd.h>
+#include <git2.h>
 #include "../antarctic/antarctic_env.h"
 #include "../pen-lan/lex.h"
 #include "../pen-lan/parse.h"
@@ -27,6 +28,7 @@ void pen_exit(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_t
 void pen_pwd(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count);
 void pen_cd(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count);
 void pen_help(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count);
+void pen_greet(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, const size_t arg_count);
 
 int run(int argc, char ** argv, history * hist, pen_alias_table * alias_table);
 
