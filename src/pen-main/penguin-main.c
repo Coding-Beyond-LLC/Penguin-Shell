@@ -40,6 +40,15 @@
 #define BUILT_INS_COUNT (sizeof(pen_builtins) / sizeof(pen_builtin))
 #define PEN_BUILTIN_KEY(b) ((b)->command)
 
+// shared by build_prompt's snprintf and its caller's buffer declaration --
+// large enough for a resolved PS1 (template + a full MAX_PATH_LEN cwd) plus
+// the git segment and reset code appended after it
+#define PROMPT_BUF_LEN (MAX_PATH_LEN + 256)
+
+// placeholder PS1 resolves at render time (see build_prompt) so the prompt
+// tracks the live working directory instead of a snapshot baked in at boot
+#define PS1_CWD_TOKEN "{cwd}"
+
 static int pen_should_exit = 0;
 
 // exit status of the last foreground list item, exposed to the next line's
@@ -596,6 +605,20 @@ char * get_git_branch(char * cwd){
 
 }
 
+// Substitutes the (single) PS1_CWD_TOKEN placeholder in ps1_template with the
+// live cwd -- decoupled from PWD/cd this way, PS1 is just a template and never
+// needs updating when the working directory changes; only the render needs
+// the current directory. A template without the token is copied through as-is.
+static void resolve_ps1(const char * ps1_template, const char * cwd, char * out, size_t out_size) {
+    const char * token = strstr(ps1_template, PS1_CWD_TOKEN);
+    if (token == NULL) {
+        snprintf(out, out_size, "%s", ps1_template);
+        return;
+    }
+    int prefix_len = (int)(token - ps1_template);
+    snprintf(out, out_size, "%.*s%s%s", prefix_len, ps1_template, cwd, token + strlen(PS1_CWD_TOKEN));
+}
+
 static char * build_prompt(char * prompt) {
 
     char cwd[MAX_PATH_LEN] = {0};
@@ -611,13 +634,16 @@ static char * build_prompt(char * prompt) {
         snprintf(git_segment, sizeof(git_segment), "\001\033[38;2;133;50;168m\002(%.32s)\001\033[38;2;0;255;255m\002 ", git_branch);
     }
 
-    //fetch the base prompt from PS1 and attach the git branch segment to it
-    char * ps1 = getenv("PS1");
-    if(ps1 == NULL){
-        ps1 = "";
+    //fetch the base prompt from PS1 and resolve its cwd placeholder against the live cwd
+    char * ps1_template = getenv("PS1");
+    if(ps1_template == NULL){
+        ps1_template = "";
     }
 
-    snprintf(prompt, MAX_PATH_LEN + 256 + strlen(git_segment), "%s%s" "\001\033[0m\002", ps1, git_segment);
+    char ps1[PROMPT_BUF_LEN];
+    resolve_ps1(ps1_template, cwd, ps1, sizeof(ps1));
+
+    snprintf(prompt, PROMPT_BUF_LEN, "%s%s" "\001\033[0m\002", ps1, git_segment);
 
     free(git_branch);
 
@@ -698,16 +724,15 @@ static void set_penguin_boot_vars(history * hist, pen_alias_table * alias_table)
     snprintf(ppid_cmd, sizeof(ppid_cmd), "xpt PPID=%d", getppid());
     process_line(ppid_cmd, hist, alias_table, 1);
 
-    //Set the PS1 variable
-    char ps1_cwd[MAX_PATH_LEN] = {0};
-    getcwd(ps1_cwd, MAX_PATH_LEN);
-
+    //Set the PS1 variable. Uses the PS1_CWD_TOKEN placeholder rather than a
+    //snapshot of the boot-time cwd -- build_prompt resolves it against the
+    //live cwd on every render, so cd never needs to touch PS1.
     char ps1_host[MAX_PATH_LEN] = {0};
     gethostname(ps1_host, sizeof(ps1_host));
 
     if(pwd != NULL){
         char ps1_cmd[MAX_PATH_LEN + 256];
-        snprintf(ps1_cmd, sizeof(ps1_cmd), "xpt PS1=\"\001\033[38;2;0;255;255m\002%.32s@%.32s#%s (•ᴗ•)ゝ \"", pwd->pw_name, ps1_host, ps1_cwd);
+        snprintf(ps1_cmd, sizeof(ps1_cmd), "xpt PS1=\"\001\033[38;2;0;255;255m\002%.32s@%.32s#" PS1_CWD_TOKEN " (•ᴗ•)ゝ \"", pwd->pw_name, ps1_host);
         process_line(ps1_cmd, hist, alias_table, 1);
     }
 
@@ -746,7 +771,7 @@ int run(int argc, char ** argv, history * hist, pen_alias_table * alias_table) {
 
     //main REPL loop
     char * cmmd;
-    char prompt[MAX_PATH_LEN + 38];
+    char prompt[PROMPT_BUF_LEN];
 
     while (!pen_should_exit && (cmmd = readline(build_prompt(prompt))) != NULL) {
         process_line(cmmd, hist, alias_table, 0);
