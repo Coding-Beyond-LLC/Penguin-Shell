@@ -1,6 +1,7 @@
 #include "./parse.h"
 #include "lan_structs.h"
 #include <stdlib.h>
+#include <string.h>
 
 // ---- parser state -------------------------------------------------------
 // The cursor is the one piece of mutable state shared across every recursive
@@ -26,6 +27,32 @@ static pen_tok * advance(parser * p) {
     return &p->toks->toks[p->pos++];
 }
 
+// true when the current token's *text* literally matches a control-flow
+// keyword, regardless of its lexed tok_type. reclassify_reserved_words (see
+// lex.c) only reliably retypes a reserved word at the *start* of a command
+// (first token of the line, or right after an operator) -- it has no way to
+// know "the token after a for-loop's NAME is always 'in'" or "the token
+// after a compound_list's trailing ';' might be 'then'/'do'/'fi'/etc, not a
+// new command". Rather than teach the lexer every one of those grammar
+// positions, the parser just checks the raw text at exactly the position
+// where it expects one of these keywords -- token type is irrelevant to it.
+static int check_kw(parser * p, const char * text) {
+    return !at_end(p) && strcmp(p->toks->toks[p->pos].text, text) == 0;
+}
+
+// true when the current token is one of the keywords that closes or
+// continues an enclosing compound command rather than starting a new
+// command -- see generate_list_tail_node
+static int at_clause_terminator(parser * p) {
+    return check_kw(p, "then") || check_kw(p, "else") || check_kw(p, "elif") ||
+           check_kw(p, "fi")   || check_kw(p, "do")   || check_kw(p, "done");
+}
+
+// true when the current token starts a compound command
+static int at_compound_command(parser * p) {
+    return check_kw(p, "if") || check_kw(p, "while") || check_kw(p, "until") || check_kw(p, "for");
+}
+
 // ---- node construction --------------------------------------------------
 static pen_ast_node * new_node(node_type type) {
     pen_ast_node * node = malloc(sizeof(pen_ast_node));
@@ -46,12 +73,16 @@ static void alloc_children(pen_ast_node * node, size_t count) {
 
 // ---- grammar productions ------------------------------------------------
 // This is the "lists / and_or / pipeline / simple_command" slice of the
-// POSIX Shell Grammar (XCU 2.10.2): reserved words are lexed and a leading
-// Bang negates a pipeline, but compound commands (if/for/while/until/case,
-// subshells, brace groups, function definitions) are not yet implemented --
-// a reserved word token appearing where a WORD is expected is a syntax
-// error (generate_exec_node's check(p, WORD) fails), same as any other
-// token the grammar can't consume.
+// POSIX Shell Grammar (XCU 2.10.2), plus if/while/until/for as compound
+// commands (see generate_compound_command_node): a leading Bang negates a
+// pipeline, and a compound command occupies a whole pipeline by itself (it
+// can be negated and chained with '&&'/'||'/';'/'&' like any other, but
+// can't be piped into or out of, and can't carry its own redirect_list).
+// case, subshells, brace groups, and function definitions are still not
+// implemented -- a reserved word token appearing where a WORD is expected
+// (including one of those still-unimplemented keywords) is a syntax error
+// (generate_exec_node's check(p, WORD) fails), same as any other token the
+// grammar can't consume.
 //
 // forward declarations: the productions are mutually recursive
 static pen_ast_node * generate_exec_node(parser * p);
@@ -68,6 +99,12 @@ static pen_ast_node * generate_and_or_node(parser * p);
 static pen_ast_node * generate_list_tail_node(parser * p);
 static pen_ast_node * generate_list_node(parser * p);
 static pen_ast_node * generate_line_node(parser * p);
+static pen_ast_node * generate_compound_command_node(parser * p);
+static pen_ast_node * generate_if_clause_node(parser * p);
+static pen_ast_node * generate_else_part_node(parser * p);
+static pen_ast_node * generate_while_clause_node(parser * p);
+static pen_ast_node * generate_until_clause_node(parser * p);
+static pen_ast_node * generate_for_clause_node(parser * p);
 
 // <exec> ::= WORD
 static pen_ast_node * generate_exec_node(parser * p) {
@@ -197,7 +234,11 @@ static pen_ast_node * generate_pipe_sequence_node(parser * p) {
     return node;
 }
 
-// <pipeline> ::= BANG? <pipe_sequence>   (POSIX pipeline)
+// <pipeline> ::= BANG? (<compound_command> | <pipe_sequence>)   (POSIX pipeline,
+// extended: a compound command occupies a whole pipeline by itself -- it can
+// be negated with '!' and chained with '&&'/'||'/';'/'&' like any other
+// pipeline, but (unlike a real POSIX shell) can't itself be a stage piped
+// into or out of another command)
 // node->tok holds the Bang token when the pipeline is negated, else NULL
 static pen_ast_node * generate_pipeline_node(parser * p) {
     pen_ast_node * node = new_node(PIPELINE);
@@ -205,7 +246,151 @@ static pen_ast_node * generate_pipeline_node(parser * p) {
         node->tok = advance(p);
     }
     alloc_children(node, 1);
-    node->nodes_children[0] = generate_pipe_sequence_node(p);
+    node->nodes_children[0] = at_compound_command(p)
+        ? generate_compound_command_node(p)
+        : generate_pipe_sequence_node(p);
+    return node;
+}
+
+// <compound_command> ::= <if_clause> | <while_clause> | <until_clause> | <for_clause>
+static pen_ast_node * generate_compound_command_node(parser * p) {
+    if (check_kw(p, "if"))    return generate_if_clause_node(p);
+    if (check_kw(p, "while")) return generate_while_clause_node(p);
+    if (check_kw(p, "until")) return generate_until_clause_node(p);
+    return generate_for_clause_node(p);   // at_compound_command guarantees check_kw(p, "for") here
+}
+
+// <else_part> ::= ELIF <list> THEN <list> <else_part>? | ELSE <list> | ε
+// returns NULL for no else-part, a LIST node for a terminal 'else', or an
+// IF_CLAUSE node representing an 'elif' (its own [2] holding a further,
+// possibly-NULL else_part). 'fi' always belongs to the outermost if_clause,
+// so it's deliberately left unconsumed here.
+static pen_ast_node * generate_else_part_node(parser * p) {
+    if (check_kw(p, "elif")) {
+        advance(p);
+        pen_ast_node * node = new_node(IF_CLAUSE);
+        alloc_children(node, 3);
+        node->nodes_children[0] = generate_list_node(p);
+        if (!check_kw(p, "then")) {
+            p->error = 1;
+            node->nodes_children[1] = NULL;
+            node->nodes_children[2] = NULL;
+            return node;
+        }
+        advance(p);
+        node->nodes_children[1] = generate_list_node(p);
+        node->nodes_children[2] = generate_else_part_node(p);
+        return node;
+    }
+    if (check_kw(p, "else")) {
+        advance(p);
+        return generate_list_node(p);
+    }
+    return NULL;   // no else-part
+}
+
+// <if_clause> ::= IF <list> THEN <list> <else_part>? FI
+static pen_ast_node * generate_if_clause_node(parser * p) {
+    pen_ast_node * node = new_node(IF_CLAUSE);
+    advance(p);                  // 'if' -- guaranteed present by at_compound_command
+    alloc_children(node, 3);
+    node->nodes_children[0] = generate_list_node(p);
+    if (!check_kw(p, "then")) {
+        p->error = 1;
+        node->nodes_children[1] = NULL;
+        node->nodes_children[2] = NULL;
+        return node;
+    }
+    advance(p);                  // 'then'
+    node->nodes_children[1] = generate_list_node(p);
+    node->nodes_children[2] = generate_else_part_node(p);
+    if (!check_kw(p, "fi")) {
+        p->error = 1;
+        return node;
+    }
+    advance(p);                  // 'fi'
+    return node;
+}
+
+// <while_clause> ::= WHILE <list> DO <list> DONE
+static pen_ast_node * generate_while_clause_node(parser * p) {
+    pen_ast_node * node = new_node(WHILE_CLAUSE);
+    advance(p);                  // 'while'
+    alloc_children(node, 2);
+    node->nodes_children[0] = generate_list_node(p);
+    if (!check_kw(p, "do")) {
+        p->error = 1;
+        node->nodes_children[1] = NULL;
+        return node;
+    }
+    advance(p);                  // 'do'
+    node->nodes_children[1] = generate_list_node(p);
+    if (!check_kw(p, "done")) {
+        p->error = 1;
+        return node;
+    }
+    advance(p);                  // 'done'
+    return node;
+}
+
+// <until_clause> ::= UNTIL <list> DO <list> DONE
+static pen_ast_node * generate_until_clause_node(parser * p) {
+    pen_ast_node * node = new_node(UNTIL_CLAUSE);
+    advance(p);                  // 'until'
+    alloc_children(node, 2);
+    node->nodes_children[0] = generate_list_node(p);
+    if (!check_kw(p, "do")) {
+        p->error = 1;
+        node->nodes_children[1] = NULL;
+        return node;
+    }
+    advance(p);                  // 'do'
+    node->nodes_children[1] = generate_list_node(p);
+    if (!check_kw(p, "done")) {
+        p->error = 1;
+        return node;
+    }
+    advance(p);                  // 'done'
+    return node;
+}
+
+// <for_clause> ::= FOR WORD IN <arg_list> SEMI DO <list> DONE
+// the trailing ';' before 'do' is required (not just POSIX style) -- without
+// it, <arg_list>'s generic "consume any WORD" rule would swallow 'do' itself
+// as one more wordlist item, since nothing else marks where the wordlist ends
+static pen_ast_node * generate_for_clause_node(parser * p) {
+    pen_ast_node * node = new_node(FOR_CLAUSE);
+    advance(p);                  // 'for'
+    if (!check(p, WORD)) {
+        p->error = 1;
+        return node;
+    }
+    node->tok = advance(p);      // loop variable name
+    if (!check_kw(p, "in")) {
+        p->error = 1;
+        return node;
+    }
+    advance(p);                  // 'in'
+    alloc_children(node, 2);
+    node->nodes_children[0] = generate_arg_list_node(p);   // wordlist
+    if (!check(p, SEMI)) {
+        p->error = 1;
+        node->nodes_children[1] = NULL;
+        return node;
+    }
+    advance(p);                  // ';'
+    if (!check_kw(p, "do")) {
+        p->error = 1;
+        node->nodes_children[1] = NULL;
+        return node;
+    }
+    advance(p);                  // 'do'
+    node->nodes_children[1] = generate_list_node(p);
+    if (!check_kw(p, "done")) {
+        p->error = 1;
+        return node;
+    }
+    advance(p);                  // 'done'
     return node;
 }
 
@@ -242,8 +427,10 @@ static pen_ast_node * generate_list_tail_node(parser * p) {
         return node;                // ε
     }
     node->tok = advance(p);
-    if (at_end(p)) {
-        return node;                // trailing separator, nothing follows
+    if (at_end(p) || at_clause_terminator(p)) {
+        return node;                // trailing separator, nothing follows --
+                                     // a clause terminator ends the enclosing
+                                     // compound_list just like end-of-input does
     }
     alloc_children(node, 2);
     node->nodes_children[0] = generate_and_or_node(p);
@@ -260,12 +447,17 @@ static pen_ast_node * generate_list_node(parser * p) {
     return node;
 }
 
-// <line> ::= <list> | ε
+// <line> ::= <list>? CONTINUATION?   (a trailing lone '\' marks the line as
+// continued onto the next one -- see process_line; node->tok holds it when
+// present, so a bare "\" alone is a valid line: 0 children, tok set)
 static pen_ast_node * generate_line_node(parser * p) {
     pen_ast_node * node = new_node(LINE);
-    if (!at_end(p)) {
+    if (!at_end(p) && !check(p, CONTINUATION)) {
         alloc_children(node, 1);
         node->nodes_children[0] = generate_list_node(p);
+    }
+    if (check(p, CONTINUATION)) {
+        node->tok = advance(p);
     }
     return node;                  // empty line: 0 children, not an error
 }

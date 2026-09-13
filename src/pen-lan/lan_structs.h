@@ -23,6 +23,7 @@ typedef enum {
     AMP,                   // '&' (separator_op, backgrounds a list item)
     ENV_VAR,
     EQ,                     // this shell's WORD EQ WORD assignment grammar, not POSIX
+    CONTINUATION,            // a lone trailing '\' (nothing after it): this line continues on the next
 
     // reserved words (see POSIX XCU 2.4) -- only ever assigned to a WORD
     // token that occurs in "command name" position (Shell Grammar Rules,

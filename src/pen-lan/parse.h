@@ -23,7 +23,16 @@ typedef enum {
     REDIRECT,
     STMT,
     WORD_NODE,
-    OP
+    OP,
+
+    // compound commands (PIPELINE's stage is one of these instead of a
+    // PIPE_SEQUENCE when it starts with if/while/until/for -- see
+    // generate_pipeline_node); a loop/if never participates in a pipe, so
+    // these only ever appear as a whole pipeline's single stage
+    IF_CLAUSE,      // [condition, then-body, else-part?] -- else-part is NULL, a LIST ('else'), or another IF_CLAUSE ('elif')
+    WHILE_CLAUSE,   // [condition, body]
+    UNTIL_CLAUSE,   // [condition, body]
+    FOR_CLAUSE      // tok = loop variable; [wordlist, body]
 } node_type;
 
 struct pen_ast_node {

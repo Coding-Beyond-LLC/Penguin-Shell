@@ -76,8 +76,8 @@ static pen_builtin pen_builtins[] = {
     {"greet", pen_greet, GREET_USG},
     {"help", pen_help, USAGE},
     { "history", pen_print_history, HIST_USG},
-    {"quit", pen_exit, EXIT_USG},
     { "pwd", pen_pwd, PWD_USG},
+    {"quit", pen_exit, EXIT_USG},
     {"unalias", pen_unalias, UNALIAS_USG},
     { "xpt", pen_export, XPT_USG}
 };
@@ -198,7 +198,7 @@ void pen_pwd(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_ta
 void pen_cd(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, const size_t arg_count) {
     (void)hist;
     int cd_res = -1;
-    if (arg_count < 2 || strcmp(tok_list->toks[1].text, "*") == 0) {
+    if (arg_count < 2 || strcmp(tok_list->toks[1].text, "~") == 0) {
         char * home_dir = getenv("HOME");
         cd_res = chdir(home_dir);
         if (cd_res == -1) {
@@ -332,6 +332,26 @@ static size_t count_args(const pen_ast_node * arg_list) {
     return count;
 }
 
+// Expands one arg_list entry to its argv text. Usually a plain ARG leaf
+// (->tok set), but generate_arg_node also promotes a "WORD=WORD" argument
+// (e.g. the "x=y" in "echo x=y") to a STMT node -- the same shape used for
+// xpt/alias's own VAR=VALUE argument, but xpt/alias read it via raw tokens
+// (command_tok_slice), not this AST, so a STMT here is just a literal
+// "var=value" argument to whatever command it belongs to; STMT itself has no
+// ->tok (only its var/op/val children do), so it's reassembled from those.
+static char * flatten_arg(const pen_ast_node * arg) {
+    if (arg->node_type == STMT) {
+        char * var = expand_word_text(arg->nodes_children[0]->tok->text, pen_last_status);
+        char * val = expand_word_text(arg->nodes_children[2]->tok->text, pen_last_status);
+        char * out = malloc(strlen(var) + strlen(val) + 2);   // "var" + '=' + "val" + '\0'
+        sprintf(out, "%s=%s", var, val);
+        free(var);
+        free(val);
+        return out;
+    }
+    return expand_word_text(arg->tok->text, pen_last_status);
+}
+
 // Returns a malloc'd NULL-terminated argv; every entry is a freshly expanded
 // (${VAR}/${?}/$?, via the current pen_last_status) owned copy -- free with
 // free_argv, not a bare free(argv)
@@ -344,7 +364,7 @@ static char ** flatten_command(const pen_ast_node * command) {
     argv[0] = expand_word_text(exec_node->tok->text, pen_last_status);
     const pen_ast_node * cur = arg_list;
     for (size_t i = 1; i < argc; i++) {
-        argv[i] = expand_word_text(cur->nodes_children[0]->tok->text, pen_last_status);
+        argv[i] = flatten_arg(cur->nodes_children[0]);
         cur = cur->nodes_children[1];
     }
     argv[argc] = NULL;
@@ -413,18 +433,115 @@ static int execute_pipe_sequence(const pen_ast_node * pipe_sequence, size_t stag
     return last_status;
 }
 
-//runs a <pipeline>: dispatches its pipe_sequence, then applies '!' negation; returns the (possibly negated) exit status.
+// forward declaration: execute_list is defined further down, but the
+// compound-command executors below (a loop/if body is itself a <list>) need
+// to call it, and they in turn are needed by execute_pipeline above that
+static void execute_list(const pen_ast_node * list, pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table);
+
+// runs a compound_list (an if/while/until condition or body, or a for
+// body) and returns the exit status of the last pipeline it actually ran --
+// execute_pipeline keeps pen_last_status current on every pipeline it runs,
+// including nested ones, so reading it back here after the list finishes
+// gives exactly the "status of the last command run" POSIX wants
+static int execute_compound_list_status(const pen_ast_node * list, pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table) {
+    execute_list(list, tok_list, hist, alias_table);
+    return pen_last_status;
+}
+
+// runs an IF_CLAUSE node: nodes_children = [condition, then-body, else-part],
+// where else-part is NULL (no else), a LIST (plain 'else'), or another
+// IF_CLAUSE (an 'elif', see generate_else_part_node) -- recurses for that case
+static int execute_if_clause(const pen_ast_node * node, pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table) {
+    int cond_status = execute_compound_list_status(node->nodes_children[0], tok_list, hist, alias_table);
+    int status;
+
+    if (cond_status == 0) {
+        status = execute_compound_list_status(node->nodes_children[1], tok_list, hist, alias_table);
+    } else if (node->nodes_children[2] != NULL) {
+        const pen_ast_node * else_part = node->nodes_children[2];
+        status = (else_part->node_type == IF_CLAUSE)
+            ? execute_if_clause(else_part, tok_list, hist, alias_table)
+            : execute_compound_list_status(else_part, tok_list, hist, alias_table);
+    } else {
+        status = 0;   // no branch taken -- POSIX: exit status is zero
+    }
+
+    pen_last_status = status;
+    return status;
+}
+
+// runs a WHILE_CLAUSE (negate=0) or UNTIL_CLAUSE (negate=1) node: nodes_children = [condition, body].
+// pen_should_exit is checked after each iteration so 'exit' inside a loop body actually stops the
+// loop (and the shell) instead of looping forever re-running it
+static int execute_while_or_until(const pen_ast_node * node, pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, int negate) {
+    const pen_ast_node * cond = node->nodes_children[0];
+    const pen_ast_node * body = node->nodes_children[1];
+    int status = 0;   // POSIX: 0 if the body never runs
+
+    for (;;) {
+        int cond_status = execute_compound_list_status(cond, tok_list, hist, alias_table);
+        int should_run = negate ? (cond_status != 0) : (cond_status == 0);
+        if (!should_run) break;
+
+        status = execute_compound_list_status(body, tok_list, hist, alias_table);
+        if (pen_should_exit) break;
+    }
+
+    pen_last_status = status;
+    return status;
+}
+
+// runs a FOR_CLAUSE node: node->tok is the loop variable name, nodes_children = [wordlist, body].
+// Each wordlist item is exported via setenv so the existing ${VAR} expansion machinery
+// (expand_vars_in_str, via getenv) picks it up in the body with no separate "shell variable"
+// concept needed -- matches how this shell already treats xpt/PWD/etc. as real env vars.
+static int execute_for_clause(const pen_ast_node * node, pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table) {
+    const char * var_name = node->tok->text;
+    const pen_ast_node * body = node->nodes_children[1];
+    int status = 0;   // POSIX: 0 if the body never runs
+
+    const pen_ast_node * cur = node->nodes_children[0];
+    while (cur->child_count > 0) {
+        char * value = flatten_arg(cur->nodes_children[0]);
+        setenv(var_name, value, 1);
+        free(value);
+
+        status = execute_compound_list_status(body, tok_list, hist, alias_table);
+        if (pen_should_exit) break;
+
+        cur = cur->nodes_children[1];
+    }
+
+    pen_last_status = status;
+    return status;
+}
+
+// dispatches a PIPELINE's compound-command child (see generate_pipeline_node) to its executor
+static int execute_compound_command(const pen_ast_node * node, pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table) {
+    switch (node->node_type) {
+        case IF_CLAUSE:    return execute_if_clause(node, tok_list, hist, alias_table);
+        case WHILE_CLAUSE: return execute_while_or_until(node, tok_list, hist, alias_table, 0);
+        case UNTIL_CLAUSE: return execute_while_or_until(node, tok_list, hist, alias_table, 1);
+        case FOR_CLAUSE:   return execute_for_clause(node, tok_list, hist, alias_table);
+        default:           return 1;   // unreachable -- generate_pipeline_node never produces another type here
+    }
+}
+
+//runs a <pipeline>: dispatches its pipe_sequence or compound command, then applies '!' negation;
+//returns the (possibly negated) exit status.
 //updates pen_last_status here (not just once per line) so $?/${?} in a later command -- even one on the
 //same line, or later in the same and_or chain -- see the freshest value, matching real shell semantics
 static int execute_pipeline(const pen_ast_node * pipeline, pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table) {
-    const pen_ast_node * pipe_sequence = pipeline->nodes_children[0];
-    size_t stages = pipe_sequence_stage_count(pipe_sequence);
+    const pen_ast_node * stage = pipeline->nodes_children[0];
 
     int status;
-    if (stages == 1) {
-        status = dispatch_command(pipe_sequence->nodes_children[0], tok_list, hist, alias_table);
+    if (stage->node_type == PIPE_SEQUENCE) {
+        size_t stages = pipe_sequence_stage_count(stage);
+        status = (stages == 1)
+            ? dispatch_command(stage->nodes_children[0], tok_list, hist, alias_table)
+            : execute_pipe_sequence(stage, stages);
     } else {
-        status = execute_pipe_sequence(pipe_sequence, stages);
+        status = execute_compound_command(stage, tok_list, hist, alias_table);
     }
 
     if (pipeline->tok != NULL) status = (status == 0) ? 1 : 0;   // leading Bang negates
@@ -486,9 +603,65 @@ static void execute_line(pen_ast_node * line, pen_tok_list * tok_list, history *
     execute_list(line->nodes_children[0], tok_list, hist, alias_table);
 }
 
-static void process_line(char * cmmd, history * hist, pen_alias_table * alias_table, int is_pen_rc) {
+// Appends every token from `addition` onto `base`, first dropping base's own
+// trailing CONTINUATION marker (the '\' that asked for more input) so it
+// doesn't survive into the assembled line. Takes ownership of addition's
+// token text and frees addition's own containers; rebuilds base->args to
+// match the merged token array.
+static void append_continuation(pen_tok_list * base, pen_tok_list * addition) {
+    size_t keep = base->n;
+    if (keep > 0 && base->toks[keep - 1].tok_type == CONTINUATION) {
+        free(base->toks[keep - 1].text);
+        keep--;
+    }
+
+    base->toks = realloc(base->toks, sizeof(pen_tok) * (keep + addition->n));
+    for (size_t i = 0; i < addition->n; i++) {
+        base->toks[keep + i] = addition->toks[i];    // ownership of text moves to base
+    }
+    base->n = keep + addition->n;
+
+    free(addition->toks);
+    free(addition->args);
+    free(addition);
+
+    free(base->args);
+    base->args = malloc(sizeof(char *) * (base->n + 1));
+    for (size_t i = 0; i < base->n; i++) base->args[i] = base->toks[i].text;
+    base->args[base->n] = NULL;
+}
+
+// Space-joins a tok_list's token text for history display. Used only for a
+// line assembled from multiple continuation fragments, where (unlike the
+// common single-fragment case) no single raw `cmmd` string spans the whole
+// thing -- each fragment was read on its own readline() call.
+static char * join_tok_text(const pen_tok_list * tok_list) {
+    size_t len = 1;
+    for (size_t i = 0; i < tok_list->n; i++) len += strlen(tok_list->toks[i].text) + 1;
+
+    char * out = malloc(len);
+    out[0] = '\0';
+    for (size_t i = 0; i < tok_list->n; i++) {
+        strcat(out, tok_list->toks[i].text);
+        if (i + 1 < tok_list->n) strcat(out, " ");
+    }
+    return out;
+}
+
+// Processes one logical command line, reading and folding in further input
+// whenever the line ends with a lone '\' continuation marker (see the
+// CONTINUATION token and generate_line_node). `pending_tok_list` carries the
+// tokens assembled from earlier fragments of the same logical line -- NULL
+// for a fresh, non-continued call; on a continuation, process_line calls
+// itself with the freshly-read next line and the accumulated tok_list so far.
+static void process_line(char * cmmd, history * hist, pen_alias_table * alias_table, int is_pen_rc, pen_tok_list * pending_tok_list) {
 
     pen_tok_list * tok_list = tokenize(cmmd, strlen(cmmd));
+
+    if (pending_tok_list != NULL) {
+        append_continuation(pending_tok_list, tok_list);
+        tok_list = pending_tok_list;
+    }
 
     //blank line, just free the tokens and return
     if(tok_list->n == 0) {
@@ -507,10 +680,6 @@ static void process_line(char * cmmd, history * hist, pen_alias_table * alias_ta
         ? normalize_env_var_tokens(tok_list)
         : normalize_env_var_tokens(expanded_tok_list);
 
-    //record every non-empty line, the way a shell keeps everything you typed
-    //we record the original input pre variable resolution
-    if(is_pen_rc != 1) record_history(hist, cmmd, tok_list, tok_list->n);
-
     pen_ast_node * line = parse(expanded_tok_list_with_vars);
     if (line == NULL) {                     // "| ls", "ls |", or a token the grammar can't take yet
         if(debug_mode_flag) fprintf(stderr, "penguin: syntax error\n");
@@ -518,6 +687,35 @@ static void process_line(char * cmmd, history * hist, pen_alias_table * alias_ta
         free_tokens(expanded_tok_list);
         free_tokens(expanded_tok_list_with_vars);
         return;
+    }
+
+    // a trailing lone '\' means this logical line isn't finished yet -- read
+    // more input and fold it into tok_list rather than running anything now
+    if (tok_list->n > 0 && tok_list->toks[tok_list->n - 1].tok_type == CONTINUATION) {
+        free_ast(line);
+        if(expanded_tok_list != NULL) free_tokens(expanded_tok_list);
+        free_tokens(expanded_tok_list_with_vars);
+
+        char * more = readline(getenv("PS2"));
+        if (more == NULL) {                 // EOF/Ctrl-D mid continuation: abandon the line
+            free_tokens(tok_list);
+            return;
+        }
+        process_line(more, hist, alias_table, is_pen_rc, tok_list);
+        free(more);
+        return;
+    }
+
+    //record every non-empty line, the way a shell keeps everything you typed
+    //we record the original input pre variable resolution
+    if(is_pen_rc != 1) {
+        if (pending_tok_list != NULL) {     // assembled from continuation fragments -- no single raw cmmd spans all of them
+            char * full_cmmd = join_tok_text(tok_list);
+            record_history(hist, full_cmmd, tok_list, tok_list->n);
+            free(full_cmmd);
+        } else {
+            record_history(hist, cmmd, tok_list, tok_list->n);
+        }
     }
 
     execute_line(line, expanded_tok_list_with_vars, hist, alias_table);
@@ -559,7 +757,7 @@ static void process_rc(history * hist, pen_alias_table * alias_table){
 
                     line[strcspn(line, "\n")] = '\0';
 
-                    process_line(line, hist, alias_table, 1);
+                    process_line(line, hist, alias_table, 1, NULL);
                 }
 
                 free(line);
@@ -665,9 +863,9 @@ static void parse_options(const int argc, char ** argv, history * hist, pen_alia
                 break;
             case 'd':
                 debug_mode_flag = 1;
-                process_line("alias lla=\"ls -la\"", hist, alias_table, 1);
-                process_line("alias ll=\"ls -ll\"", hist, alias_table, 1);
-                process_line("xpt PEN_HOME=${HOME}/Penguin-Shell", hist, alias_table, 1);
+                process_line("alias lla=\"ls -la\"", hist, alias_table, 1, NULL);
+                process_line("alias ll=\"ls -ll\"", hist, alias_table, 1, NULL);
+                process_line("xpt PEN_HOME=${HOME}/Penguin-Shell", hist, alias_table, 1, NULL);
                 break;
             default:
                 fprintf(stdout, "%s", USAGE);
@@ -679,7 +877,7 @@ static void parse_options(const int argc, char ** argv, history * hist, pen_alia
 static void set_penguin_boot_vars(history * hist, pen_alias_table * alias_table){
 
     //Set the ENV variable
-    process_line("xpt ENV=\"${HOME}/.penrc\"", hist, alias_table, 1);
+    process_line("xpt ENV=\"${HOME}/.penrc\"", hist, alias_table, 1, NULL);
 
     //Set the HOME variable
     uid_t uid = getuid();
@@ -687,42 +885,42 @@ static void set_penguin_boot_vars(history * hist, pen_alias_table * alias_table)
     if(pwd != NULL){
         char home_cmd[MAX_PATH_LEN + 16];
         snprintf(home_cmd, sizeof(home_cmd), "xpt HOME=%s", pwd->pw_dir);
-        process_line(home_cmd, hist, alias_table, 1);
+        process_line(home_cmd, hist, alias_table, 1, NULL);
     }else{
         printf("Error setting HOME! errno: %d\n", errno);
     }
 
     //Set the IFS variable
-    process_line("xpt IFS=\" \t\n\"", hist, alias_table, 1);
+    process_line("xpt IFS=\" \t\n\"", hist, alias_table, 1, NULL);
 
     //Set the LANG variable
-    process_line("xpt LANG=\"C.UTF-8\"", hist, alias_table, 1);
+    process_line("xpt LANG=\"C.UTF-8\"", hist, alias_table, 1, NULL);
 
     //Set the LC_ALL variable
-    process_line("xpt LC_ALL=\"C.UTF-8\"", hist, alias_table, 1);
+    process_line("xpt LC_ALL=\"C.UTF-8\"", hist, alias_table, 1, NULL);
 
     //Set the LC_COLLATE variable
-    process_line("xpt LC_COLLATE=\"en_US.UTF-8\"", hist, alias_table, 1);
+    process_line("xpt LC_COLLATE=\"en_US.UTF-8\"", hist, alias_table, 1, NULL);
 
     //Set the LC_CTYPE variable
-    process_line("xpt LC_COLLATE=\"POSIX\"", hist, alias_table, 1);
+    process_line("xpt LC_COLLATE=\"POSIX\"", hist, alias_table, 1, NULL);
 
     //Set the LC_MESSAGES variable
-    process_line("xpt LC_MESSAGES=\"en_US.UTF-8\"", hist, alias_table, 1);
+    process_line("xpt LC_MESSAGES=\"en_US.UTF-8\"", hist, alias_table, 1, NULL);
 
     //Set the LINENO variable
-    process_line("xpt LINENO=1", hist, alias_table, 1);
+    process_line("xpt LINENO=1", hist, alias_table, 1, NULL);
 
     //Set the NLSPATH variable
-    process_line("xpt NLSPATH=/usr/share/nls/%L/%N.cat:/usr/share/nls/default/%N.cat", hist, alias_table, 1);
+    process_line("xpt NLSPATH=/usr/share/nls/%L/%N.cat:/usr/share/nls/default/%N.cat", hist, alias_table, 1, NULL);
 
     //Set the PATH variable
-    process_line("xpt PATH=\"/home/nate/Penguin-Shell/build:/home/nate/pychar-2023.2.5/bin:/home/nate/GoLand-2025.1.3/bin:/home/nate/clion/bin:${PATH}\"", hist, alias_table, 1);
+    process_line("xpt PATH=\"/home/nate/Penguin-Shell/build:/home/nate/pychar-2023.2.5/bin:/home/nate/GoLand-2025.1.3/bin:/home/nate/clion/bin:${PATH}\"", hist, alias_table, 1, NULL);
 
     //Set the PPID variable
     char ppid_cmd[32];
     snprintf(ppid_cmd, sizeof(ppid_cmd), "xpt PPID=%d", getppid());
-    process_line(ppid_cmd, hist, alias_table, 1);
+    process_line(ppid_cmd, hist, alias_table, 1, NULL);
 
     //Set the PS1 variable. Uses the PS1_CWD_TOKEN placeholder rather than a
     //snapshot of the boot-time cwd -- build_prompt resolves it against the
@@ -733,21 +931,21 @@ static void set_penguin_boot_vars(history * hist, pen_alias_table * alias_table)
     if(pwd != NULL){
         char ps1_cmd[MAX_PATH_LEN + 256];
         snprintf(ps1_cmd, sizeof(ps1_cmd), "xpt PS1=\"\001\033[38;2;0;255;255m\002%.32s@%.32s#" PS1_CWD_TOKEN " (•ᴗ•)ゝ \"", pwd->pw_name, ps1_host);
-        process_line(ps1_cmd, hist, alias_table, 1);
+        process_line(ps1_cmd, hist, alias_table, 1, NULL);
     }
 
     //Set the PS2 variable
-    process_line("xpt PS2=\"(•ᴗ•)ゝ -> \"", hist, alias_table, 1);
+    process_line("xpt PS2=\"(•ᴗ•)ゝ -> \"", hist, alias_table, 1, NULL);
 
     //Set the PS4 variable
-    process_line("xpt PS4=\"(•ᴗ•)ゝ [Line: $LINENO] -> \"", hist, alias_table, 1);
+    process_line("xpt PS4=\"(•ᴗ•)ゝ [Line: $LINENO] -> \"", hist, alias_table, 1, NULL);
 
     //Set the PWD variable
     char pwd_cwd[MAX_PATH_LEN] = {0};
     if (getcwd(pwd_cwd, MAX_PATH_LEN) != NULL) {
         char pwd_cmd[MAX_PATH_LEN + 16];
         snprintf(pwd_cmd, sizeof(pwd_cmd), "xpt PWD=%s", pwd_cwd);
-        process_line(pwd_cmd, hist, alias_table, 1);
+        process_line(pwd_cmd, hist, alias_table, 1, NULL);
     }
 }
 
@@ -774,7 +972,7 @@ int run(int argc, char ** argv, history * hist, pen_alias_table * alias_table) {
     char prompt[PROMPT_BUF_LEN];
 
     while (!pen_should_exit && (cmmd = readline(build_prompt(prompt))) != NULL) {
-        process_line(cmmd, hist, alias_table, 0);
+        process_line(cmmd, hist, alias_table, 0, NULL);
         free(cmmd);
     }
 
