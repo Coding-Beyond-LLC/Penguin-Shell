@@ -934,8 +934,10 @@ static void set_penguin_boot_vars(history * hist, pen_alias_table * alias_table)
         process_line(ps1_cmd, hist, alias_table, 1, NULL);
     }
 
-    //Set the PS2 variable
-    process_line("xpt PS2=\"(•ᴗ•)ゝ -> \"", hist, alias_table, 1, NULL);
+    //Set the PS2 variable. Unlike PS1, PS2 is passed straight to readline()
+    //(see process_line) without going through build_prompt, so the reset
+    //code has to be baked in here or the cyan color bleeds into the typed input.
+    process_line("xpt PS2=\"\001\033[38;2;0;255;255m\002(•ᴗ•)ゝ -> \001\033[0m\002\"", hist, alias_table, 1, NULL);
 
     //Set the PS4 variable
     process_line("xpt PS4=\"(•ᴗ•)ゝ [Line: $LINENO] -> \"", hist, alias_table, 1, NULL);
