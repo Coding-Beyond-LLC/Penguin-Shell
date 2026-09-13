@@ -17,7 +17,8 @@ Optional: Add TARGET BUILD DIRECTORY to PATH
 ## Requirements
 * OS: Linux
 * CMake: 3.10 or greater
-* Readline: install via ```sudo apt install libreadline-dev```
+* Readline: install via ```apt install libreadline-dev```
+* libgit2: install via ```apt install libgit2-dev```
 
 ## Usage
 ```
