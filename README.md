@@ -32,6 +32,13 @@ penguin -h
 Prints out the list of built in commands for the penguin shell
 
 ```
+penguin -f script.psh
+```
+Runs every line of `script.psh` the way `~/.penrc` runs at startup (no
+history recording), then exits. See [demos/](demos/) for sample scripts to
+try this with.
+
+```
 ==========================
     P  E  N  G  U  I  N
 ==========================

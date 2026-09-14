@@ -183,6 +183,24 @@ static int next_token(char * input, size_t n, size_t * idx, char ** text_out, pe
 
     if (*idx >= n) return 0;
 
+    // rule (this shell's own): a lone '\' with nothing after it -- i.e. the
+    // very last character of the input -- delimits the line and marks it as
+    // continued onto the next one (see process_line). Checked here, before
+    // word-scanning starts, so it's only recognized as its own token (a '\'
+    // fused onto a preceding word, e.g. "foo\" with no space, is left to the
+    // ordinary in-word backslash handling below instead).
+    if (input[*idx] == '\\' && *idx + 1 == n) {
+        (*idx)++;
+        if (text_out) {
+            char * t = malloc(2);
+            t[0] = '\\';
+            t[1] = '\0';
+            *text_out = t;
+        }
+        if (type_out) *type_out = CONTINUATION;
+        return 1;
+    }
+
     char * out = text_out ? malloc((n - *idx) + 1) : NULL;
     size_t out_len = 0;
 

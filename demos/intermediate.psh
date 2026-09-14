@@ -1,0 +1,71 @@
+# intermediate.psh -- a tour of Penguin Shell for someone comfortable with a
+# terminal already (they know cd/ls/cat) but new to this shell specifically.
+# Run it with:
+#   penguin -f demos/intermediate.psh
+# It ends by handing you an interactive prompt so you can keep exploring.
+
+echo "=== Penguin Shell: intermediate tour ==="
+echo ""
+
+echo "-- Variables --"
+echo "'xpt' sets an environment variable, and curly-brace syntax reads it back:"
+xpt DEMO_NAME="penguin-shell"
+echo "DEMO_NAME is set to: ${DEMO_NAME}"
+echo "(note: this shell only expands the curly-brace form; a bare dollar-name is not expanded)"
+echo ""
+
+echo "-- Aliases --"
+echo "'alias' gives a shortcut name to a longer command:"
+alias ll="ls -la"
+ll
+echo "'unalias' removes it again:"
+unalias ll
+echo ""
+
+echo "-- Exit status --"
+echo "Every command finishes with an exit status: 0 means success."
+echo "the special question-mark variable always holds the last command's status:"
+true
+echo "status after 'true':  ${?}"
+false
+echo "status after 'false': ${?}"
+echo ""
+
+echo "-- && and || --"
+echo "'&&' only runs the next command if the previous one succeeded;"
+echo "'||' only runs it if the previous one failed:"
+true  && echo "true ran, so this prints"
+false || echo "false ran, so this prints instead"
+echo ""
+
+echo "-- Pipes and redirection --"
+echo "'|' sends one command's output into the next command's input;"
+echo "'>' writes output to a file, '>>' appends to it:"
+echo "three little penguins" > penguin_notes.txt
+echo "waddle waddle waddle" >> penguin_notes.txt
+cat penguin_notes.txt | wc -w
+rm -f penguin_notes.txt
+echo ""
+
+echo "-- Conditionals --"
+echo "'if' branches on a command's exit status, here using the 'test' ([ ]) command:"
+if [ -d demos ]; then echo "yes, a 'demos' folder exists here"; else echo "no 'demos' folder here"; fi
+echo ""
+
+echo "-- Loops --"
+echo "'for' walks over a list of words:"
+for stage in build test ship; do echo "stage: ${stage}"; done
+echo ""
+echo "'until' repeats while a condition stays false -- here it runs exactly once:"
+xpt ready=0
+until [ ${ready} -eq 1 ]; do echo "warming up..."; xpt ready=1; done
+echo ""
+
+echo "-- History --"
+echo "Everything you type interactively is recorded, viewable with 'history'."
+echo "Commands run from a -f script like this one are NOT recorded, so your"
+echo "history stays about what YOU typed, not what a script typed for you."
+echo ""
+
+echo "Tour done -- this shell instance will now exit. Start a fresh 'penguin'"
+echo "session to keep exploring, and try 'help' for the full command list. (•ᴗ•)ゝ"

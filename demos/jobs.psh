@@ -1,0 +1,43 @@
+# jobs.psh -- a flashier demo: Penguin Shell orchestrating a batch of 10
+# Python jobs and reporting on how they went. Meant to run after (or instead
+# of) the other demos, for an audience that wants to see the shell driving
+# real work rather than just narrating its own features.
+# Run it with:
+#   penguin -f demos/jobs.psh
+# from anywhere -- it locates job_worker.py via ${PEN_SCRIPT_DIR}, the
+# script's own directory (set by -f), rather than assuming a cwd.
+
+echo "=== Penguin Shell: batch job demo ==="
+echo "Each 'job' below is a real python3 process (job_worker.py) that"
+echo "pretends to process a batch of records and exits 0 (success) or 1"
+echo "(failure). Penguin Shell's job is to run all 10, watch each one's exit"
+echo "status, and build a report -- using nothing but 'for', 'if', the"
+echo "question-mark exit-status variable, and plain output redirection."
+echo ""
+
+xpt job_log="/tmp/penguin_jobs_demo.log"
+rm -f ${job_log}
+
+for job in 1 2 3 4 5 6 7 8 9 10; do python3 ${PEN_SCRIPT_DIR}/job_worker.py ${job}; if [ ${?} -eq 0 ]; then echo "job ${job}: OK" >> ${job_log}; else echo "job ${job}: FAILED" >> ${job_log}; fi; done
+
+echo ""
+echo "-- Report --"
+echo "Here's the log Penguin Shell built line-by-line as each job finished:"
+cat ${job_log}
+echo ""
+
+echo "Counting outcomes with grep, since this shell has no arithmetic yet:"
+echo -n "  succeeded: "
+grep -c OK ${job_log}
+echo -n "  failed:    "
+grep -c FAILED ${job_log}
+echo ""
+
+echo "Cleaning up the log file:"
+rm -f ${job_log}
+echo ""
+
+echo "That's a real batch pipeline: penguin shell for control flow, python for"
+echo "the work. This shell instance exits now -- from a fresh 'penguin'"
+echo "session, try re-running just one job yourself:"
+echo "  python3 ${PEN_SCRIPT_DIR}/job_worker.py 4"
