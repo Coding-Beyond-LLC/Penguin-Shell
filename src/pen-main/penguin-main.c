@@ -9,6 +9,7 @@
 #include <git2/global.h>
 #include <git2/refs.h>
 #include <git2/repository.h>
+#include <libgen.h>
 #include <pwd.h>
 #include <readline/history.h>
 #include <string.h>
@@ -17,7 +18,8 @@
 #define USAGE   \
     "The penguin shell (•ᴗ•)ゝ\n" \
     "Run the shell by calling the penguin executable, be sure to set penguin in your path to call from any dir. \n" \
-    "options: -h (print help), -x (turn off writing of history to disk), -d (turn on debug mode). \n" \
+    "options: -h (print help), -x (turn off writing of history to disk), -d (turn on debug mode), \n" \
+    "         -f [file] (run the commands in a .psh script file before dropping into the interactive shell). \n" \
     "basic commands:\n" \
     "  alias [alias name]=[alias value]      Creates an alias with the specified name.\n" \
     "  cd [path]                             Change directory to path (use * for home directory).\n" \
@@ -60,6 +62,7 @@ static struct option pen_options[] = {
     {"help", no_argument, NULL, 'h'},
     {"no-disk-hist", no_argument, NULL, 'x'},
     {"debug-mode", no_argument, NULL, 'd'},
+    {"file", required_argument, NULL, 'f'},
     {0, 0, 0, 0}
 };
 
@@ -110,7 +113,8 @@ static void apply_redirects(const pen_ast_node * redirect_list) {
     const pen_ast_node * cur = redirect_list;
     while (cur->child_count > 0) {
         const pen_ast_node * redirect  = cur->nodes_children[0];
-        const char *         filename  = redirect->nodes_children[0]->tok->text;
+        // expanded like any other argument (${VAR}/${?}/$?) so "> ${LOG}" works, not just "> literal.txt"
+        char *               filename  = expand_word_text(redirect->nodes_children[0]->tok->text, pen_last_status);
         pen_tok_type         rtype     = redirect->tok->tok_type;
 
         int fd;
@@ -124,11 +128,13 @@ static void apply_redirects(const pen_ast_node * redirect_list) {
 
         if (fd < 0) {
             fprintf(stderr, "%s: %s\n", filename, strerror(errno));
+            free(filename);
             _exit(1);
         }
 
         dup2(fd, rtype == REDIRECT_IN ? STDIN_FILENO : STDOUT_FILENO);
         close(fd);
+        free(filename);
 
         cur = cur->nodes_children[1];
     }
@@ -726,6 +732,25 @@ static void process_line(char * cmmd, history * hist, pen_alias_table * alias_ta
     free_tokens(expanded_tok_list_with_vars);
 }
 
+// Feeds every line of `stream` through process_line with is_pen_rc=1, so
+// commands don't get recorded to history -- shared by process_rc (~/.penrc)
+// and process_psh_file (a user-supplied -f script), which differ only in
+// where the stream comes from and how a missing file is reported.
+static void process_rc_stream(FILE * stream, history * hist, pen_alias_table * alias_table) {
+
+    char * line = NULL;
+    size_t len = 0;
+
+    while(getline(&line, &len, stream) != -1){
+
+        line[strcspn(line, "\n")] = '\0';
+
+        process_line(line, hist, alias_table, 1, NULL);
+    }
+
+    free(line);
+}
+
 static void process_rc(history * hist, pen_alias_table * alias_table){
 
     const char * home = getenv("HOME");
@@ -749,18 +774,7 @@ static void process_rc(history * hist, pen_alias_table * alias_table){
             if(stream == NULL && debug_mode_flag){
                 printf("failed to read line from .penrc :(\n");
             }else{
-
-                char * line = NULL;
-                size_t len = 0;
-
-                while(getline(&line, &len, stream) != -1){
-
-                    line[strcspn(line, "\n")] = '\0';
-
-                    process_line(line, hist, alias_table, 1, NULL);
-                }
-
-                free(line);
+                process_rc_stream(stream, hist, alias_table);
                 fclose(stream);
             }
         }
@@ -770,6 +784,38 @@ static void process_rc(history * hist, pen_alias_table * alias_table){
 
     }
 
+}
+
+// Runs a user-supplied .psh script (see -f/--file) the same way process_rc
+// runs ~/.penrc: every line is dispatched through process_line with
+// is_pen_rc=1, so scripted commands don't pollute interactive history. If the
+// script itself calls 'exit', pen_should_exit is set and run()'s REPL loop
+// below never starts -- matching how .penrc can already end the shell early.
+// Unlike .penrc, a script named explicitly via -f is expected to exist, so a
+// failure to open it is reported rather than silently skipped.
+//
+// Before running it, exports PEN_SCRIPT_DIR as the script's own directory
+// (this shell has no $0/BASH_SOURCE equivalent) so a script can reach sibling
+// files -- "${PEN_SCRIPT_DIR}/helper.py" -- regardless of the shell's cwd
+// when -f was invoked, rather than assuming it was launched from one
+// particular directory.
+static void process_psh_file(const char * path, history * hist, pen_alias_table * alias_table) {
+
+    FILE * stream = fopen(path, "r");
+    if (stream == NULL) {
+        fprintf(stderr, "penguin: %s: %s\n", path, strerror(errno));
+        return;
+    }
+
+    char * path_copy = strdup(path);
+    char * dir = dirname(path_copy);   // may return a pointer into path_copy, or a static "." / "/" -- either way, used below before path_copy is freed
+    char xpt_cmd[MAX_PATH_LEN + 32];
+    snprintf(xpt_cmd, sizeof(xpt_cmd), "xpt PEN_SCRIPT_DIR=%s", dir);
+    process_line(xpt_cmd, hist, alias_table, 1, NULL);
+    free(path_copy);
+
+    process_rc_stream(stream, hist, alias_table);
+    fclose(stream);
 }
 
 char * get_git_branch(char * cwd){
@@ -848,11 +894,12 @@ static char * build_prompt(char * prompt) {
     return prompt;
 }
 
-//method that parses the options for the shell itself, such as the help flag, if the user enters -h or --help then it will print the usage message and exit
-static void parse_options(const int argc, char ** argv, history * hist, pen_alias_table * alias_table) {
+//method that parses the options for the shell itself, such as the help flag, if the user enters -h or --help then it will print the usage message and exit.
+//*psh_file is set to the -f/--file argument (a .psh script path), or left NULL if the flag wasn't given.
+static void parse_options(const int argc, char ** argv, history * hist, pen_alias_table * alias_table, const char ** psh_file) {
     int option_char = 0;
     int opt_idx = 0;
-    while (((option_char) = getopt_long(argc, argv, "h::x::d::", pen_options, &opt_idx)) != -1) {
+    while (((option_char) = getopt_long(argc, argv, "h::x::d::f:", pen_options, &opt_idx)) != -1) {
         switch (option_char) {
             case 'h':
                 fprintf(stdout, "%s", USAGE);
@@ -866,6 +913,9 @@ static void parse_options(const int argc, char ** argv, history * hist, pen_alia
                 process_line("alias lla=\"ls -la\"", hist, alias_table, 1, NULL);
                 process_line("alias ll=\"ls -ll\"", hist, alias_table, 1, NULL);
                 process_line("xpt PEN_HOME=${HOME}/Penguin-Shell", hist, alias_table, 1, NULL);
+                break;
+            case 'f':
+                *psh_file = optarg;
                 break;
             default:
                 fprintf(stdout, "%s", USAGE);
@@ -963,11 +1013,20 @@ int run(int argc, char ** argv, history * hist, pen_alias_table * alias_table) {
     //Initialize git tools
     git_libgit2_init();
 
-    parse_options(argc, argv, hist, alias_table);
+    const char * psh_file = NULL;
+    parse_options(argc, argv, hist, alias_table, &psh_file);
 
     process_rc(hist, alias_table);
 
-    pen_greet(NULL, NULL, NULL, 0);
+    if (psh_file != NULL) {
+        // -f is for running a script, not seeding an interactive session -- once it
+        // finishes (or calls 'exit' itself) the shell closes rather than falling
+        // through to a prompt, matching how `sh script.sh` behaves non-interactively
+        process_psh_file(psh_file, hist, alias_table);
+        pen_should_exit = 1;
+    }
+
+    if (!pen_should_exit) pen_greet(NULL, NULL, NULL, 0);
 
     //main REPL loop
     char * cmmd;

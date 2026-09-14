@@ -1,0 +1,68 @@
+# engineer.psh -- a tour of Penguin Shell's more mechanical features, for an
+# audience that already knows POSIX shells and wants to see what this one
+# supports (and where it currently differs from bash/zsh/dash).
+# Run it with:
+#   penguin -f demos/engineer.psh
+# Every line here runs with the rc flag set, so none of it lands in your
+# interactive history -- see the last section for a live demonstration of that.
+
+echo "=== Penguin Shell: engineer tour ==="
+echo ""
+
+echo "-- Multi-stage pipelines --"
+echo "one two three four five" | tr ' ' '\n' | grep -v three | wc -l
+echo ""
+
+echo "-- Redirection --"
+echo "first line"  > /tmp/pen_engineer_demo.txt
+echo "second line" >> /tmp/pen_engineer_demo.txt
+wc -l < /tmp/pen_engineer_demo.txt
+rm -f /tmp/pen_engineer_demo.txt
+echo "(note: only bare <, > and >> are wired up right now -- no fd-numbered"
+echo " forms like 2> or 2>&1 yet, see REDIRECT_IN/OUT/APPEND in lex.c)"
+echo ""
+
+echo "-- Short-circuiting (&&, ||) and exit status --"
+grep -q root /etc/passwd && echo "found root in /etc/passwd"
+grep -q no_such_user_xyz /etc/passwd || echo "no_such_user_xyz not present, as expected"
+echo "last status: ${?}"
+echo ""
+
+echo "-- Backgrounding with & --"
+sleep 1 &
+echo "the sleep above was backgrounded -- this line runs without waiting on it"
+echo ""
+
+echo "-- Control flow: for / if / until --"
+for n in 1 2 3; do echo "for-loop tick ${n}"; done
+if [ -d src ]; then echo "src/ exists, this looks like the repo root"; else echo "src/ not found here"; fi
+xpt spun_up=0
+until [ ${spun_up} -eq 1 ]; do echo "spinning up..."; xpt spun_up=1; done
+echo "(note: no arithmetic expansion or bare 'var=value' assignment yet --"
+echo " loop counters here are toggled via 'xpt', and only -eq/-lt/-f/-d style"
+echo " test operators are reliable; bare '=' inside [ ] gets parsed as an"
+echo " assignment token today, not a string-equality test)"
+echo ""
+
+echo "-- Aliases and env vars are real environment state --"
+alias gs="git status --short --branch"
+gs
+unalias gs
+xpt PEN_DEMO_STAGE="engineer"
+env | grep PEN_DEMO_STAGE
+echo ""
+
+echo "-- Git-aware prompt --"
+echo "if this repo has a HEAD, the interactive prompt below will show its"
+echo "branch name in the PS1 segment (see get_git_branch in penguin-main.c):"
+git rev-parse --abbrev-ref HEAD
+echo ""
+
+echo "-- This script itself doesn't touch your history --"
+echo "every command above ran through process_line with is_pen_rc=1, exactly"
+echo "like ~/.penrc does on startup -- so 'history' below should NOT list them:"
+history
+echo ""
+
+echo "Tour done -- this shell instance exits here, same as any -f script. Run"
+echo "'penguin' directly for an interactive session. (•ᴗ•)ゝ"

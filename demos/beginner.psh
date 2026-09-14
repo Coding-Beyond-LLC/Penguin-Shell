@@ -1,0 +1,62 @@
+# beginner.psh -- a friendly first look at Penguin Shell for someone who has
+# never used a terminal before. Run it with:
+#   penguin -f demos/beginner.psh
+# Everything below runs automatically like a slideshow, then hands control
+# back to you so you can try a few things yourself.
+
+echo ""
+echo "Welcome! This is a little guided tour of the Penguin Shell (•ᴗ•)ゝ"
+echo "A 'shell' is just a program that lets you talk to your computer by typing"
+echo "words instead of clicking on things. Let's try a few words together."
+echo ""
+
+echo "First, let's ask the computer where we currently are."
+echo "The command for that is 'pwd', short for 'print working directory':"
+pwd
+echo ""
+
+echo "Now let's see what files live in this folder, using 'ls':"
+ls
+echo ""
+
+echo "We can ask the computer who you're logged in as:"
+whoami
+echo ""
+
+echo "And what today's date and time is:"
+date
+echo ""
+
+echo "Let's make a brand new folder just for this demo, called 'penguin_tour':"
+mkdir -p penguin_tour
+echo "Now let's step inside it using 'cd' (change directory):"
+cd penguin_tour
+pwd
+echo ""
+
+echo "Let's create a little text file and write a message into it:"
+echo "Hello from the Penguin Shell!" > note.txt
+echo "'cat' shows us what's inside a file:"
+cat note.txt
+echo ""
+
+echo "Computers are great at repeating things. Here's a tiny loop that says"
+echo "hello to three friends for us:"
+for friend in Alex Sam Jordan; do echo "Hello, ${friend}!"; done
+echo ""
+
+echo "Let's clean up after ourselves and head back to where we started:"
+cd ..
+rm -rf penguin_tour
+pwd
+echo ""
+
+echo "That's the whole tour! A few words to remember:"
+echo "  pwd     -- where am I?"
+echo "  ls      -- what's here?"
+echo "  cd      -- go somewhere else"
+echo "  echo    -- say something"
+echo "  help    -- see everything the shell can do"
+echo ""
+echo "This demo shell is about to close on its own -- start a real one anytime"
+echo "with 'penguin', then try typing 'help' and pressing Enter (•ᴗ•)ゝ"
