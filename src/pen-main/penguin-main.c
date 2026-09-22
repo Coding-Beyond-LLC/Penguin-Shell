@@ -32,11 +32,13 @@
 
 #define ALIAS_USG "alias [alias name]=[alias value], Creates an alias with the specified name.\n"
 #define CD_USG "cd [path], Change directory to path (use * for home directory).\n"
+#define ENV_USG "env, Outputs your current session's environment variables.\n"
 #define EXIT_USG "exit, Closes the shell.\n"
 #define GREET_USG "greet, Outputs the shell's startup banner.\n"
 #define HIST_USG "history, Outputs command history throughout the shell's runtime up to a max of 128 commands (latest commands).\n"
 #define PWD_USG "pwd, Outputs the current working directory.\n"
 #define UNALIAS_USG "unalias [alias name], deletes the specified alias.\n"
+#define UNSET_USG "unset previously exported variables.\n"
 #define XPT_USG "xpt [variable name]=[value], Sets a new environment variable with the specified value.\n"
 
 #define BUILT_INS_COUNT (sizeof(pen_builtins) / sizeof(pen_builtin))
@@ -75,6 +77,7 @@ typedef struct {
 static pen_builtin pen_builtins[] = {
     {"alias", pen_export, ALIAS_USG},
     {"cd", pen_cd, CD_USG},
+    {"env", pen_print_antarctic_vars, ENV_USG},
     {"exit", pen_exit, EXIT_USG},
     {"greet", pen_greet, GREET_USG},
     {"help", pen_help, USAGE},
@@ -82,6 +85,7 @@ static pen_builtin pen_builtins[] = {
     { "pwd", pen_pwd, PWD_USG},
     {"quit", pen_exit, EXIT_USG},
     {"unalias", pen_unalias, UNALIAS_USG},
+    {"unset", pen_unset, UNSET_USG},
     { "xpt", pen_export, XPT_USG}
 };
 

@@ -59,9 +59,10 @@ typedef struct {
 
 //environment manipulation library
 void pen_export(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, const size_t arg_count);
+void pen_unset(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, const size_t arg_count);
 void pen_unalias(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, const size_t arg_count);
 
-void print_antarctic_vars();
+void pen_print_antarctic_vars(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count);
 
 //history management library
 history * init_history();

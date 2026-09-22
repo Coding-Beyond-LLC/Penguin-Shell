@@ -4,11 +4,14 @@
 
 #include <readline/history.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
 #include "antarctic_env.h"
 #include "../pen-lan/lex.h"
+
+extern char ** environ;
 
 int persist_hist_off_flag = 0;
 int debug_mode_flag = 0;
@@ -121,6 +124,19 @@ void pen_export(pen_tok_list * tok_list, history * hist, pen_alias_table * alias
 
 }
 
+void pen_unset(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count){
+
+    (void) hist;
+    (void) alias_table;
+    (void) arg_count;
+
+    if(tok_list->n < 2){
+        return;
+    }
+
+    unsetenv(tok_list->toks[1].text);
+}
+
 void pen_unalias(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count) {
     (void) hist;
     if (tok_list->n < 2) {
@@ -129,6 +145,16 @@ void pen_unalias(pen_tok_list * tok_list, history * hist, pen_alias_table * alia
 
     char * alias = tok_list->toks[1].text;
     clear_alias(alias_table, alias);
+}
+
+void pen_print_antarctic_vars(pen_tok_list * tok_list, history * hist, pen_alias_table * alias_table, size_t arg_count){
+
+    char ** antarctic_env_ptr;
+
+    for(antarctic_env_ptr = environ; *antarctic_env_ptr != NULL; antarctic_env_ptr++){
+        puts(*antarctic_env_ptr);
+    }
+
 }
 
 //history management library
